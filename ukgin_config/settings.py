@@ -1,7 +1,8 @@
 import os
 from datetime import timedelta
-
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -9,29 +10,47 @@ STATIC_URL = '/static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+
+def get_env_value(name, cast=None):
+    value = os.getenv(name)
+    if value is None:
+        raise RuntimeError(f"The required environment variable '{name}' is not set.")
+    if cast is not None:
+        try:
+            return cast(value)
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid value for '{name}': {exc}") from exc
+    return value
+
+
+def get_bool_env(name):
+    value = get_env_value(name).strip().lower()
+    if value in ('true', '1', 'yes', 'on'):
+        return True
+    if value in ('false', '0', 'no', 'off'):
+        return False
+    raise RuntimeError(f"Invalid boolean value for '{name}': '{value}'")
+
+
+def get_list_env(name):
+    value = get_env_value(name)
+    return [item.strip() for item in value.split(',') if item.strip()]
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-m-%p2*&67hb)vbjo1hb!$on!+*kd&8bnqgh1m)v%4zavfke6ns'
+SECRET_KEY = get_env_value('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = get_bool_env('DEBUG')
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '::1']
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:3000',
-    'http://[::1]:5173',
-    'http://[::1]:3000',
-]
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://[::1]:5173',
-]
+ALLOWED_HOSTS = get_list_env('ALLOWED_HOSTS')
+CORS_ALLOWED_ORIGINS = get_list_env('CORS_ALLOWED_ORIGINS')
+CSRF_TRUSTED_ORIGINS = get_list_env('CSRF_TRUSTED_ORIGINS')
 
 
 # Application definition
@@ -99,12 +118,12 @@ AUTH_USER_MODEL = 'users.User'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'ukgin_site_db'),
-        'USER': os.environ.get('DB_USER', 'ukgin_site_db_user'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'WohJj5gikXUp9BQYwmNWEWtCOAH9suCR'),
-        'HOST': os.environ.get('DB_HOST', 'dpg-d9lh7vnqj5pc7393016g-a.oregon-postgres.render.com'),
-        'PORT': os.environ.get('DB_PORT', '5432')
+        'ENGINE': get_env_value('DB_ENGINE'),
+        'NAME': get_env_value('DB_NAME'),
+        'USER': get_env_value('DB_USER'),
+        'PASSWORD': get_env_value('DB_PASSWORD'),
+        'HOST': get_env_value('DB_HOST'),
+        'PORT': get_env_value('DB_PORT', cast=int),
     }
 }
 

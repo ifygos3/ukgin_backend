@@ -1,0 +1,732 @@
+from django.db import models
+from django.contrib.auth.models import AbstractUser
+from django.conf import settings
+
+PAYMENT_METHODS = [
+    ('bank_transfer', 'Bank Transfer'),
+    ('crypto', 'Cryptocurrency'),
+    ('card_payment', 'Credit/Debit Card'),
+    ('other', 'Other'),
+]
+
+DEPOSIT_STATUS = [
+    ('pending', 'Pending'),
+    ('approved', 'Approved'),
+    ('rejected', 'Rejected'),
+]
+
+WITHDRAWAL_STATUS = [
+    ('pending', 'Pending'),
+    ('approved', 'Approved'),
+    ('rejected', 'Rejected'),
+    ('processing', 'Processing'),
+    ('completed', 'Completed'),
+]
+
+DOCUMENT_TYPES = [
+    ('id_card', 'ID Card'),
+    ('passport', 'Passport'),
+    ('selfie', 'Selfie'),
+]
+
+KYC_STATUS = [
+    ('pending', 'Pending'),
+    ('approved', 'Approved'),
+    ('rejected', 'Rejected'),
+    ('resubmission', 'Resubmission Requested'),
+]
+
+TRANSACTION_TYPES = [
+    ('credit', 'Credit'),
+    ('debit', 'Debit'),
+]
+
+NOTIFICATION_TYPES = [
+    ('announcement', 'Announcement'),
+    ('email', 'Email'),
+    ('in_app', 'In-App'),
+    ('maintenance', 'Maintenance'),
+]
+
+PRIORITY_CHOICES = [
+    ('low', 'Low'),
+    ('medium', 'Medium'),
+    ('high', 'High'),
+    ('urgent', 'Urgent'),
+]
+
+TICKET_STATUS = [
+    ('open', 'Open'),
+    ('in_progress', 'In Progress'),
+    ('closed', 'Closed'),
+    ('reopened', 'Reopened'),
+]
+
+REFERRAL_STATUS = [
+    ('pending', 'Pending'),
+    ('completed', 'Completed'),
+    ('cancelled', 'Cancelled'),
+]
+
+INVESTMENT_STATUS = [
+    ('active', 'Active'),
+    ('completed', 'Completed'),
+    ('cancelled', 'Cancelled'),
+]
+
+AUDIT_ACTIONS = [
+    ('login', 'Login'),
+    ('login_failed', 'Login Failed'),
+    ('logout', 'Logout'),
+    ('user_create', 'User Created'),
+    ('user_update', 'User Updated'),
+    ('user_delete', 'User Deleted'),
+    ('user_activate', 'User Activated'),
+    ('user_suspend', 'User Suspended'),
+    ('user_ban', 'User Banned'),
+    ('user_reset_password', 'User Password Reset'),
+    ('user_role_change', 'User Role Changed'),
+    ('deposit_approve', 'Deposit Approved'),
+    ('deposit_reject', 'Deposit Rejected'),
+    ('withdrawal_approve', 'Withdrawal Approved'),
+    ('withdrawal_reject', 'Withdrawal Rejected'),
+    ('kyc_approve', 'KYC Approved'),
+    ('kyc_reject', 'KYC Rejected'),
+    ('wallet_credit', 'Wallet Credited'),
+    ('wallet_debit', 'Wallet Debited'),
+    ('wallet_freeze', 'Wallet Frozen'),
+    ('wallet_unfreeze', 'Wallet Unfrozen'),
+    ('donation_approve', 'Donation Approved'),
+    ('notification_send', 'Notification Sent'),
+    ('ticket_assign', 'Ticket Assigned'),
+    ('ticket_close', 'Ticket Closed'),
+    ('ticket_reopen', 'Ticket Reopened'),
+    ('settings_update', 'Settings Updated'),
+    ('report_generated', 'Report Generated'),
+    ('other', 'Other'),
+]
+
+ROLE_CHOICES = [
+    ('member', 'Member'),
+    ('support_staff', 'Support Staff'),
+    ('finance_manager', 'Finance Manager'),
+    ('admin', 'Admin'),
+    ('super_admin', 'Super Admin'),
+]
+
+
+class User(AbstractUser):
+    full_name = models.CharField(max_length=100)
+    email = models.EmailField(unique=True)
+    address = models.CharField(max_length=300)
+    phone_number = models.CharField(max_length=20)
+    country = models.CharField(max_length=50)
+    state_of_origin = models.CharField(max_length=50)
+    lga = models.CharField(max_length=50)
+    community = models.CharField(max_length=100, null=True, blank=True)
+    place_of_birth = models.CharField(max_length=100)
+    sex = models.CharField(max_length=10)
+    highest_qualification = models.CharField(max_length=100)
+    institution_attended = models.CharField(max_length=100)
+    year_of_graduation = models.CharField(max_length=100)
+    profession = models.CharField(max_length=100)
+    current_job = models.CharField(max_length=100)
+    job_title = models.CharField(max_length=100)
+    job_experience = models.CharField(max_length=1000)
+    current_employee = models.CharField(max_length=100)
+    about_user = models.TextField(null=True, blank=True)
+    role = models.CharField(
+        max_length=20,
+        choices=[
+            ('member', 'Member'),
+            ('support_staff', 'Support Staff'),
+            ('finance_manager', 'Finance Manager'),
+            ('admin', 'Admin'),
+            ('super_admin', 'Super Admin'),
+        ],
+        default='member',
+    )
+    is_suspended = models.BooleanField(default=False)
+    is_banned = models.BooleanField(default=False)
+    kyc_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending'),
+            ('approved', 'Approved'),
+            ('rejected', 'Rejected'),
+            ('resubmission', 'Resubmission Requested'),
+        ],
+        default='pending',
+    )
+    total_donations = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_deposits = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_withdrawals = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    referred_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='referrals',
+    )
+    referral_code = models.CharField(max_length=20, unique=True, null=True, blank=True)
+    ip_address = models.CharField(max_length=45, null=True, blank=True)
+    device_info = models.CharField(max_length=200, null=True, blank=True)
+    last_login_ip = models.CharField(max_length=45, null=True, blank=True)
+    signature = models.ImageField(upload_to='signatures/', null=True, blank=True)
+    signature_data = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.full_name
+
+
+class Wallet(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='wallet',
+    )
+    balance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    is_frozen = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Wallet of {self.user.full_name}"
+
+
+class WalletTransaction(models.Model):
+    TRANSACTION_TYPES = [
+        ('credit', 'Credit'),
+        ('debit', 'Debit'),
+    ]
+    wallet = models.ForeignKey(
+        Wallet,
+        on_delete=models.CASCADE,
+        related_name='transactions',
+    )
+    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    description = models.TextField(blank=True)
+    reference = models.CharField(max_length=100, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.transaction_type} - {self.amount} - {self.reference}"
+
+
+class KYCDocument(models.Model):
+    DOCUMENT_TYPES = [
+        ('id_card', 'ID Card'),
+        ('passport', 'Passport'),
+        ('selfie', 'Selfie'),
+    ]
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='kyc_documents',
+    )
+    document_type = models.CharField(max_length=20, choices=DOCUMENT_TYPES)
+    document_file = models.FileField(upload_to='kyc_documents/')
+    is_verified = models.BooleanField(default=False)
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verified_kyc',
+    )
+    rejection_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.document_type} - {self.user.full_name}"
+
+
+class Donation(models.Model):
+    PAYMENT_METHODS = [
+        ('bank_transfer', 'Bank Transfer'),
+        ('crypto', 'Cryptocurrency'),
+        ('card_payment', 'Credit/Debit Card'),
+        ('other', 'Other'),
+    ]
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='donations',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS)
+    bank_name = models.CharField(max_length=100, blank=True)
+    account_number = models.CharField(max_length=30, blank=True)
+    crypto_type = models.CharField(max_length=50, blank=True)
+    wallet_address = models.CharField(max_length=200, blank=True)
+    card_type = models.CharField(max_length=20, blank=True)
+    card_last_four = models.CharField(max_length=4, blank=True)
+    card_holder = models.CharField(max_length=100, blank=True)
+    card_expiry = models.CharField(max_length=7, blank=True)
+    transaction_reference = models.CharField(max_length=100, blank=True)
+    proof_of_donation = models.FileField(upload_to='donation_proofs/', blank=True, null=True)
+    notes = models.TextField(blank=True)
+    is_approved = models.BooleanField(default=False)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_donations',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Donation of {self.amount} by {self.user.full_name}"
+
+
+class Deposit(models.Model):
+    PAYMENT_METHODS = [
+        ('bank_transfer', 'Bank Transfer'),
+        ('crypto', 'Cryptocurrency'),
+        ('card_payment', 'Credit/Debit Card'),
+        ('other', 'Other'),
+    ]
+    DEPOSIT_STATUS = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='deposits',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS)
+    bank_name = models.CharField(max_length=100, blank=True)
+    account_number = models.CharField(max_length=30, blank=True)
+    crypto_type = models.CharField(max_length=50, blank=True)
+    wallet_address = models.CharField(max_length=200, blank=True)
+    card_type = models.CharField(max_length=20, blank=True)
+    card_last_four = models.CharField(max_length=4, blank=True)
+    card_holder = models.CharField(max_length=100, blank=True)
+    card_expiry = models.CharField(max_length=7, blank=True)
+    transaction_reference = models.CharField(max_length=100, blank=True)
+    proof_of_payment = models.FileField(upload_to='deposit_proofs/', blank=True, null=True)
+    status = models.CharField(max_length=20, choices=DEPOSIT_STATUS, default='pending')
+    notes = models.TextField(blank=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_deposits',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Deposit of {self.amount} - {self.status} by {self.user.full_name}"
+
+
+class Withdrawal(models.Model):
+    WITHDRAWAL_STATUS = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+    ]
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='withdrawals',
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHODS)
+    bank_name = models.CharField(max_length=100, blank=True)
+    account_number = models.CharField(max_length=30, blank=True)
+    crypto_type = models.CharField(max_length=50, blank=True)
+    wallet_address = models.CharField(max_length=200, blank=True)
+    card_type = models.CharField(max_length=20, blank=True)
+    card_last_four = models.CharField(max_length=4, blank=True)
+    card_holder = models.CharField(max_length=100, blank=True)
+    card_expiry = models.CharField(max_length=7, blank=True)
+    transaction_reference = models.CharField(max_length=100, blank=True)
+    status = models.CharField(max_length=20, choices=WITHDRAWAL_STATUS, default='pending')
+    notes = models.TextField(blank=True)
+    processed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='processed_withdrawals',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Withdrawal of {self.amount} - {self.status} by {self.user.full_name}"
+
+
+class Notification(models.Model):
+    NOTIFICATION_TYPES = [
+        ('announcement', 'Announcement'),
+        ('email', 'Email'),
+        ('in_app', 'In-App'),
+        ('maintenance', 'Maintenance'),
+    ]
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES, default='in_app')
+    sent_to_all = models.BooleanField(default=False)
+    is_read = models.BooleanField(default=False)
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    sent_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='sent_notifications',
+        null=True,
+        blank=True,
+    )
+    target_users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='targeted_notifications')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
+class SupportTicket(models.Model):
+    TICKET_STATUS = [
+        ('open', 'Open'),
+        ('in_progress', 'In Progress'),
+        ('closed', 'Closed'),
+        ('reopened', 'Reopened'),
+    ]
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('urgent', 'Urgent'),
+    ]
+    subject = models.CharField(max_length=200)
+    description = models.TextField()
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='medium')
+    status = models.CharField(max_length=20, choices=TICKET_STATUS, default='open')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='support_tickets',
+    )
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_tickets',
+    )
+    attachment = models.FileField(upload_to='ticket_attachments/', blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.subject} - {self.user.full_name}"
+
+
+class TicketReply(models.Model):
+    message = models.TextField()
+    attachment = models.FileField(upload_to='ticket_replies/', blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+    )
+    ticket = models.ForeignKey(
+        SupportTicket,
+        on_delete=models.CASCADE,
+        related_name='replies',
+    )
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Reply to {self.ticket.subject}"
+
+
+class Referral(models.Model):
+    REFERRAL_STATUS = [
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    reward_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.CharField(max_length=20, choices=REFERRAL_STATUS, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    referred_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='referral_referred_users',
+    )
+    referrer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='referral_referrers',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Referral by {self.referrer.full_name}"
+
+
+class AuditLog(models.Model):
+    AUDIT_ACTIONS = [
+        ('login', 'Login'),
+        ('login_failed', 'Login Failed'),
+        ('logout', 'Logout'),
+        ('user_create', 'User Created'),
+        ('user_update', 'User Updated'),
+        ('user_delete', 'User Deleted'),
+        ('user_activate', 'User Activated'),
+        ('user_suspend', 'User Suspended'),
+        ('user_ban', 'User Banned'),
+        ('user_reset_password', 'User Password Reset'),
+        ('user_role_change', 'User Role Changed'),
+        ('deposit_approve', 'Deposit Approved'),
+        ('deposit_reject', 'Deposit Rejected'),
+        ('withdrawal_approve', 'Withdrawal Approved'),
+        ('withdrawal_reject', 'Withdrawal Rejected'),
+        ('kyc_approve', 'KYC Approved'),
+        ('kyc_reject', 'KYC Rejected'),
+        ('wallet_credit', 'Wallet Credited'),
+        ('wallet_debit', 'Wallet Debited'),
+        ('wallet_freeze', 'Wallet Frozen'),
+        ('wallet_unfreeze', 'Wallet Unfrozen'),
+        ('donation_approve', 'Donation Approved'),
+        ('notification_send', 'Notification Sent'),
+        ('ticket_assign', 'Ticket Assigned'),
+        ('ticket_close', 'Ticket Closed'),
+        ('ticket_reopen', 'Ticket Reopened'),
+        ('settings_update', 'Settings Updated'),
+        ('report_generated', 'Report Generated'),
+        ('other', 'Other'),
+    ]
+    action = models.CharField(max_length=30, choices=AUDIT_ACTIONS)
+    details = models.TextField()
+    ip_address = models.CharField(max_length=45)
+    created_at = models.DateTimeField(auto_now_add=True)
+    admin_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='admin_audit_logs',
+        null=True,
+        blank=True,
+    )
+    target_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='target_audit_logs',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.action} by {self.admin_user.full_name}"
+
+
+class SystemSettings(models.Model):
+    site_name = models.CharField(max_length=200, default='UKGIN')
+    logo = models.ImageField(upload_to='settings/', blank=True, null=True)
+    favicon = models.ImageField(upload_to='settings/', blank=True, null=True)
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=20, blank=True)
+    contact_address = models.TextField(blank=True)
+    email_host = models.CharField(max_length=200, blank=True)
+    email_port = models.IntegerField(default=587)
+    email_host_user = models.CharField(max_length=200, blank=True)
+    email_host_password = models.CharField(max_length=200, blank=True)
+    sms_api_key = models.CharField(max_length=200, blank=True)
+    sms_api_secret = models.CharField(max_length=200, blank=True)
+    payment_wallet_address = models.CharField(max_length=200, blank=True)
+    crypto_wallet_address = models.CharField(max_length=200, blank=True)
+    supported_cryptocurrencies = models.TextField(blank=True)
+    minimum_deposit = models.DecimalField(decimal_places=2, default=10, max_digits=12)
+    maximum_deposit = models.DecimalField(decimal_places=2, default=10000, max_digits=12)
+    maintenance_mode = models.BooleanField(default=False)
+    terms_and_conditions = models.TextField(blank=True)
+    privacy_policy = models.TextField(blank=True)
+    bank_name = models.CharField(max_length=200, blank=True)
+    account_name = models.CharField(max_length=200, blank=True)
+    account_number = models.CharField(max_length=50, blank=True)
+    btc_address = models.CharField(max_length=200, blank=True)
+    eth_address = models.CharField(max_length=200, blank=True)
+    usdt_address = models.CharField(max_length=200, blank=True)
+    bnb_address = models.CharField(max_length=200, blank=True)
+    sol_address = models.CharField(max_length=200, blank=True)
+    card_payment_enabled = models.BooleanField(default=True)
+    card_payment_provider = models.CharField(max_length=100, blank=True)
+    card_api_key = models.CharField(max_length=200, blank=True)
+    card_api_secret = models.CharField(max_length=200, blank=True)
+    roi_percentage = models.DecimalField(decimal_places=2, default=5, max_digits=5)
+    investment_duration_days = models.IntegerField(default=30)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = 'System Settings'
+
+    def __str__(self):
+        return self.site_name
+
+
+class Investment(models.Model):
+    INVESTMENT_STATUS = [
+        ('active', 'Active'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='investments',
+    )
+    plan_name = models.CharField(max_length=100)
+    roi_percentage = models.DecimalField(max_digits=5, decimal_places=2)
+    investment_duration_days = models.IntegerField()
+    amount_invested = models.DecimalField(max_digits=12, decimal_places=2)
+    expected_return = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=20, choices=INVESTMENT_STATUS, default='active')
+    start_date = models.DateTimeField(null=True, blank=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.plan_name} - {self.user.full_name}"
+
+
+class LoginHistory(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='login_history',
+    )
+    ip_address = models.CharField(max_length=45)
+    device_info = models.CharField(max_length=200, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    is_successful = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Login by {self.user.full_name} at {self.created_at}"
+
+
+class Event(models.Model):
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    event_date = models.DateTimeField()
+    location = models.CharField(max_length=200)
+    event_type = models.CharField(max_length=100)
+    is_featured = models.BooleanField(default=False)
+    is_past = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-event_date']
+
+    def __str__(self):
+        return self.name
+
+
+class EventResponse(models.Model):
+    RESPONSE_TYPES = [
+        ('going', 'Going'),
+        ('interested', 'Interested'),
+        ('not_going', 'Not Going'),
+    ]
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.CASCADE,
+        related_name='responses',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='event_responses',
+    )
+    response_type = models.CharField(max_length=20, choices=RESPONSE_TYPES)
+    message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = ['event', 'user']
+
+    def __str__(self):
+        return f"{self.user.full_name} - {self.response_type} - {self.event.name}"
+
+
+class DocumentCategory(models.Model):
+    name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = 'Document Categories'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class Document(models.Model):
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    file = models.FileField(upload_to='documents/')
+    category = models.ForeignKey(
+        DocumentCategory,
+        on_delete=models.CASCADE,
+        related_name='documents',
+    )
+    is_public = models.BooleanField(default=True)
+    is_receipt = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
+class Constitution(models.Model):
+    version = models.CharField(max_length=20)
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    file = models.FileField(upload_to='constitutions/', blank=True, null=True)
+    is_current = models.BooleanField(default=False)
+    effective_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-effective_date', '-created_at']
+
+    def __str__(self):
+        return f"{self.title} - {self.version}"

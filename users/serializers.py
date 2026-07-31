@@ -13,7 +13,7 @@ ROLE_CHOICES = [
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'password', 'phone_number', 'country', 'state_of_origin', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'address', 'first_name', 'last_name', 'role', 'is_suspended', 'is_banned', 'kyc_status', 'total_donations', 'total_deposits', 'total_withdrawals', 'referred_by', 'referral_code', 'ip_address', 'device_info', 'last_login_ip', 'is_active', 'is_staff', 'date_joined', 'created_at', 'updated_at']
+        fields = ['id', 'username', 'email', 'password', 'phone_number', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'address', 'first_name', 'last_name', 'full_name', 'role', 'is_suspended', 'is_banned', 'kyc_status', 'total_donations', 'total_deposits', 'total_withdrawals', 'referred_by', 'referral_code', 'ip_address', 'device_info', 'last_login_ip', 'is_active', 'is_staff', 'date_joined', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at', 'date_joined']
         extra_kwargs = {
             'password': {'write_only': True},
@@ -33,6 +33,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     phone_number = serializers.CharField(required=False, allow_blank=True)
     country = serializers.CharField(required=False, allow_blank=True)
     state_of_origin = serializers.CharField(required=False, allow_blank=True)
+    state_of_residence = serializers.CharField(required=False, allow_blank=True)
     lga = serializers.CharField(required=False, allow_blank=True)
     community = serializers.CharField(required=False, allow_blank=True)
     place_of_birth = serializers.CharField(required=False, allow_blank=True)
@@ -50,7 +51,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'password', 'confirmPassword', 'first_name', 'last_name', 'full_name', 'address', 'phone_number', 'country', 'state_of_origin', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'signature_data']
+        fields = ['id', 'username', 'email', 'password', 'confirmPassword', 'first_name', 'last_name', 'full_name', 'address', 'phone_number', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'signature_data']
 
     def validate_email(self, value):
         if User.objects.filter(email__iexact=value).exists():
@@ -90,7 +91,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             last_name=last_name,
             full_name=full_name or f"{first_name} {last_name}".strip(),
         )
-        for field in ['address', 'phone_number', 'country', 'state_of_origin', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user']:
+        for field in ['address', 'phone_number', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user']:
             if field in validated_data:
                 setattr(user, field, validated_data[field])
             elif field == 'about_user':
@@ -256,7 +257,7 @@ class DashboardStatsSerializer(UserStatsSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'full_name', 'phone_number', 'address', 'country', 'state_of_origin', 'lga', 'community', 'role', 'kyc_status', 'signature', 'created_at']
+        fields = ['id', 'username', 'email', 'full_name', 'phone_number', 'address', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'role', 'kyc_status', 'signature', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -295,6 +296,20 @@ class EventResponseSerializer(serializers.ModelSerializer):
         return obj.event.name if obj.event else ''
 
 
+class PublicUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'full_name']
+
+
+class PublicEventResponseSerializer(serializers.ModelSerializer):
+    user = PublicUserSerializer(read_only=True)
+
+    class Meta:
+        model = EventResponse
+        fields = ['id', 'event', 'user', 'response_type', 'message', 'created_at']
+
+
 class DocumentCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentCategory
@@ -319,3 +334,21 @@ class ConstitutionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Constitution
         fields = ['id', 'version', 'title', 'content', 'file', 'is_current', 'effective_date', 'created_at', 'updated_at']
+
+
+class AnnouncementSerializer(serializers.ModelSerializer):
+    author_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Announcement
+        fields = ['id', 'title', 'message', 'is_active', 'author', 'author_name', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_author_name(self, obj):
+        return obj.author.full_name if obj.author else None
+
+
+class PublicAnnouncementSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Announcement
+        fields = ['id', 'title', 'message', 'created_at']

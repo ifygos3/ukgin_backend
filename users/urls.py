@@ -18,6 +18,7 @@ router.register(r'audit-logs', views.AuditLogViewSet, basename='audit-log')
 router.register(r'system-settings', views.SystemSettingsViewSet, basename='system-settings')
 router.register(r'login-history', views.LoginHistoryViewSet, basename='login-history')
 router.register(r'events', views.AdminEventViewSet, basename='admin-event')
+router.register(r'announcements', views.AdminAnnouncementViewSet, basename='announcement')
 router.register(r'document-categories', views.AdminDocumentCategoryViewSet, basename='admin-document-category')
 router.register(r'documents', views.AdminDocumentViewSet, basename='admin-document')
 router.register(r'constitutions', views.AdminConstitutionViewSet, basename='admin-constitution')
@@ -48,4 +49,5 @@ urlpatterns = [
     path('dashboard/profit-analytics/', views.ProfitAnalyticsView.as_view(), name='profit-analytics'),
     path('dashboard/user-activity/', views.UserActivityView.as_view(), name='user-activity'),
     path('export/', views.ExportReportView.as_view(), name='export-report'),
+    path('public/announcements/', views.PublicAnnouncementListView.as_view(), name='public-announcements'),
 ]

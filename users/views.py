@@ -6,14 +6,15 @@ from django.db.models import Sum, Count, Q, Avg
 from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth import get_user_model
-from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution
+from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution, Announcement
 from .serializers import (
     UserSerializer, RegisterSerializer, WalletSerializer, WalletTransactionSerializer,
     KYCDocumentSerializer, DonationSerializer, DepositSerializer, WithdrawalSerializer,
     NotificationSerializer, SupportTicketSerializer,
     TicketReplySerializer, ReferralSerializer, AuditLogSerializer, SystemSettingsSerializer,
     LoginHistorySerializer, DashboardStatsSerializer,
-    EventSerializer, EventResponseSerializer, DocumentCategorySerializer, DocumentSerializer, ConstitutionSerializer,
+     EventSerializer, EventResponseSerializer, PublicEventResponseSerializer, DocumentCategorySerializer, DocumentSerializer, ConstitutionSerializer,
+     AnnouncementSerializer, PublicAnnouncementSerializer,
 )
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -68,12 +69,12 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
         start_time = time.perf_counter()
         data = request.data
-        identifier = data.get('username') or data.get('email')
+        identifier = data.get('username') or data.get('email') or data.get('phone_number')
         password = data.get('password')
         remember_me = data.get('remember_me', False)
 
         if not identifier:
-            return Response({'detail': 'Username or email is required'}, status=400)
+            return Response({'detail': 'Username, email, or phone number is required'}, status=400)
         if not password:
             return Response({'detail': 'Password is required'}, status=400)
 
@@ -82,6 +83,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             user = User.objects.filter(username=identifier).first()
             if not user:
                 user = User.objects.filter(email=identifier).first()
+            if not user:
+                user = User.objects.filter(phone_number=identifier).first()
 
         if not user:
             AuditLog.objects.create(
@@ -239,6 +242,37 @@ class UserViewSet(viewsets.ModelViewSet):
             ip_address=request.META.get('REMOTE_ADDR', ''),
         )
         return Response({'status': 'success', 'message': f'User {user.username} suspended'})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def unsuspend(self, request, pk=None):
+        user = self.get_object()
+        user.is_suspended = False
+        user.is_active = True
+        user.save()
+        AuditLog.objects.create(
+            admin_user=request.user,
+            action='user_unsuspend',
+            target_user=user,
+            details=f'User {user.username} unsuspended',
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+        )
+        return Response({'status': 'success', 'message': f'User {user.username} unsuspended'})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def unban(self, request, pk=None):
+        user = self.get_object()
+        user.is_banned = False
+        user.is_active = True
+        user.is_suspended = False
+        user.save()
+        AuditLog.objects.create(
+            admin_user=request.user,
+            action='user_unban',
+            target_user=user,
+            details=f'User {user.username} unbanned',
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+        )
+        return Response({'status': 'success', 'message': f'User {user.username} unbanned'})
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def ban(self, request, pk=None):
@@ -1207,7 +1241,7 @@ class AdminEventResponseViewSet(viewsets.ModelViewSet):
 
 
 class PublicEventResponseListView(generics.ListAPIView):
-    serializer_class = EventResponseSerializer
+    serializer_class = PublicEventResponseSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
@@ -1302,3 +1336,20 @@ class JoinChapterView(APIView):
         request.user.state_of_origin = state
         request.user.save()
         return Response({'status': 'success', 'message': f'Joined {state} chapter', 'state': state})
+
+
+class AdminAnnouncementViewSet(viewsets.ModelViewSet):
+    queryset = Announcement.objects.all().order_by('-created_at')
+    serializer_class = AnnouncementSerializer
+    permission_classes = [IsAdminUser]
+
+    def perform_create(self, serializer):
+        serializer.save(author=self.request.user)
+
+
+class PublicAnnouncementListView(generics.ListAPIView):
+    serializer_class = PublicAnnouncementSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return Announcement.objects.filter(is_active=True).order_by('-created_at')[:10]

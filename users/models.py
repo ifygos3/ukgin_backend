@@ -122,6 +122,7 @@ class User(AbstractUser):
     phone_number = models.CharField(max_length=20)
     country = models.CharField(max_length=50)
     state_of_origin = models.CharField(max_length=50)
+    state_of_residence = models.CharField(max_length=100, null=True, blank=True)
     lga = models.CharField(max_length=50)
     community = models.CharField(max_length=100, null=True, blank=True)
     place_of_birth = models.CharField(max_length=100)
@@ -649,6 +650,27 @@ class Event(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class Announcement(models.Model):
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    is_active = models.BooleanField(default=True)
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='announcements',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
 
 
 class EventResponse(models.Model):

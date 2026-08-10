@@ -1,4 +1,5 @@
 from django.urls import path, include
+from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework.routers import DefaultRouter
 from . import views
 
@@ -22,15 +23,33 @@ router.register(r'announcements', views.AdminAnnouncementViewSet, basename='anno
 router.register(r'document-categories', views.AdminDocumentCategoryViewSet, basename='admin-document-category')
 router.register(r'documents', views.AdminDocumentViewSet, basename='admin-document')
 router.register(r'constitutions', views.AdminConstitutionViewSet, basename='admin-constitution')
+router.register(r'volunteer-applications', views.VolunteerApplicationViewSet, basename='volunteer-application')
+router.register(r'newsletter-subscriptions', views.NewsletterSubscriptionViewSet, basename='newsletter-subscription')
+router.register(r'newsletters', views.NewsletterViewSet, basename='newsletter')
+router.register(r'contact-messages', views.ContactMessageViewSet, basename='contact-message')
+router.register(r'pages', views.PageContentViewSet, basename='page-content')
+router.register(r'categories', views.CategoryViewSet, basename='category')
+router.register(r'posts', views.PostViewSet, basename='post')
+router.register(r'projects', views.ProjectViewSet, basename='project')
+router.register(r'social-media-links', views.SocialMediaLinkViewSet, basename='social-media-link')
+router.register(r'gallery-items', views.GalleryImageViewSet, basename='gallery-image')
+router.register(r'partners', views.PartnerViewSet, basename='partner')
+router.register(r'sponsors', views.SponsorViewSet, basename='sponsor')
+router.register(r'executive-leaders', views.ExecutiveLeaderViewSet, basename='executive-leader')
+router.register(r'state-chapters', views.StateChapterViewSet, basename='state-chapter')
 
 urlpatterns = [
     path('', include(router.urls)),
     path('login/', views.CustomTokenObtainPairView.as_view(), name='login'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('users/', views.UserListView.as_view(), name='user-list'),
     path('users/<int:user_id>/', views.UserDetailView.as_view(), name='user-detail'),
     path('users/profile/', views.UserProfileView.as_view(), name='user-profile'),
+    path('users/delete-account/', views.DeleteMyAccountView.as_view(), name='delete-my-account'),
     path('password-reset/', views.PasswordResetRequestView.as_view(), name='password-reset'),
     path('password-reset/confirm/', views.PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
+    path('email-verify/', views.EmailVerificationView.as_view(), name='email-verification'),
+    path('email-verify/resend/', views.ResendVerificationEmailView.as_view(), name='resend-verification-email'),
     path('public/events/', views.PublicEventsView.as_view(), name='public-events'),
     path('public/constitution/', views.PublicConstitutionView.as_view(), name='public-constitution'),
     path('public/documents/', views.PublicDocumentsView.as_view(), name='public-documents'),
@@ -50,4 +69,21 @@ urlpatterns = [
     path('dashboard/user-activity/', views.UserActivityView.as_view(), name='user-activity'),
     path('export/', views.ExportReportView.as_view(), name='export-report'),
     path('public/announcements/', views.PublicAnnouncementListView.as_view(), name='public-announcements'),
+    path('my/notifications/', views.MyNotificationsListView.as_view(), name='my-notifications'),
+    path('my/notifications/unread-count/', views.UnreadNotificationCountView.as_view(), name='my-notifications-unread-count'),
+    path('my/notifications/<int:pk>/mark-read/', views.MarkNotificationReadView.as_view(), name='my-notification-mark-read'),
+    path('my/notifications/mark-all-read/', views.MarkAllNotificationsReadView.as_view(), name='my-notifications-mark-all-read'),
+    path('public/volunteer-application/', views.VolunteerApplicationCreateView.as_view(), name='public-volunteer-application'),
+    path('public/newsletter-subscribe/', views.NewsletterSubscriptionViewSet.as_view({'post': 'subscribe'}), name='public-newsletter-subscribe'),
+    path('public/newsletter-unsubscribe/', views.NewsletterSubscriptionViewSet.as_view({'post': 'unsubscribe'}), name='public-newsletter-unsubscribe'),
+    path('public/contact-message/', views.ContactMessageCreateView.as_view(), name='public-contact-message'),
+    path('public/category-list/', views.PublicCategoryListView.as_view(), name='public-categories'),
+    path('public/posts/', views.PublicPostListView.as_view(), name='public-post-list'),
+    path('public/posts/<slug:slug>/', views.PublicPostDetailView.as_view(), name='public-post-detail'),
+    path('public/projects/', views.PublicProjectListView.as_view(), name='public-project-list'),
+    path('public/projects/<slug:slug>/', views.PublicProjectDetailView.as_view(), name='public-project-detail'),
+    path('public/social-media-links/', views.PublicSocialMediaLinksView.as_view(), name='public-social-media-links'),
+    path('public/gallery-items/', views.PublicGalleryImageListView.as_view(), name='public-gallery-items'),
+    path('public/executive-leaders/', views.PublicExecutiveLeadersView.as_view(), name='public-executive-leaders'),
+    path('public/pages/<slug:slug>/', views.PublicPageContentView.as_view(), name='public-page-content'),
 ]

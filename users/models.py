@@ -5,7 +5,6 @@ from django.conf import settings
 PAYMENT_METHODS = [
     ('bank_transfer', 'Bank Transfer'),
     ('crypto', 'Cryptocurrency'),
-    ('card_payment', 'Credit/Debit Card'),
     ('other', 'Other'),
 ]
 
@@ -175,6 +174,7 @@ class User(AbstractUser):
     last_login_ip = models.CharField(max_length=45, null=True, blank=True)
     signature = models.ImageField(upload_to='signatures/', null=True, blank=True)
     signature_data = models.TextField(blank=True)
+    email_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -250,7 +250,6 @@ class Donation(models.Model):
     PAYMENT_METHODS = [
         ('bank_transfer', 'Bank Transfer'),
         ('crypto', 'Cryptocurrency'),
-        ('card_payment', 'Credit/Debit Card'),
         ('other', 'Other'),
     ]
     user = models.ForeignKey(
@@ -264,11 +263,6 @@ class Donation(models.Model):
     account_number = models.CharField(max_length=30, blank=True)
     crypto_type = models.CharField(max_length=50, blank=True)
     wallet_address = models.CharField(max_length=200, blank=True)
-    card_type = models.CharField(max_length=20, blank=True)
-    card_last_four = models.CharField(max_length=4, blank=True)
-    card_holder = models.CharField(max_length=100, blank=True)
-    card_expiry = models.CharField(max_length=7, blank=True)
-    transaction_reference = models.CharField(max_length=100, blank=True)
     proof_of_donation = models.FileField(upload_to='donation_proofs/', blank=True, null=True)
     notes = models.TextField(blank=True)
     is_approved = models.BooleanField(default=False)
@@ -290,7 +284,6 @@ class Deposit(models.Model):
     PAYMENT_METHODS = [
         ('bank_transfer', 'Bank Transfer'),
         ('crypto', 'Cryptocurrency'),
-        ('card_payment', 'Credit/Debit Card'),
         ('other', 'Other'),
     ]
     DEPOSIT_STATUS = [
@@ -309,11 +302,6 @@ class Deposit(models.Model):
     account_number = models.CharField(max_length=30, blank=True)
     crypto_type = models.CharField(max_length=50, blank=True)
     wallet_address = models.CharField(max_length=200, blank=True)
-    card_type = models.CharField(max_length=20, blank=True)
-    card_last_four = models.CharField(max_length=4, blank=True)
-    card_holder = models.CharField(max_length=100, blank=True)
-    card_expiry = models.CharField(max_length=7, blank=True)
-    transaction_reference = models.CharField(max_length=100, blank=True)
     proof_of_payment = models.FileField(upload_to='deposit_proofs/', blank=True, null=True)
     status = models.CharField(max_length=20, choices=DEPOSIT_STATUS, default='pending')
     notes = models.TextField(blank=True)
@@ -350,11 +338,6 @@ class Withdrawal(models.Model):
     account_number = models.CharField(max_length=30, blank=True)
     crypto_type = models.CharField(max_length=50, blank=True)
     wallet_address = models.CharField(max_length=200, blank=True)
-    card_type = models.CharField(max_length=20, blank=True)
-    card_last_four = models.CharField(max_length=4, blank=True)
-    card_holder = models.CharField(max_length=100, blank=True)
-    card_expiry = models.CharField(max_length=7, blank=True)
-    transaction_reference = models.CharField(max_length=100, blank=True)
     status = models.CharField(max_length=20, choices=WITHDRAWAL_STATUS, default='pending')
     notes = models.TextField(blank=True)
     processed_by = models.ForeignKey(
@@ -371,6 +354,23 @@ class Withdrawal(models.Model):
         return f"Withdrawal of {self.amount} - {self.status} by {self.user.full_name}"
 
 
+
+class LoginHistory(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='login_history',
+    )
+    ip_address = models.CharField(max_length=45)
+    device_info = models.CharField(max_length=200, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    is_successful = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Login by {self.user.full_name} at {self.created_at}"
+
+
 class Notification(models.Model):
     NOTIFICATION_TYPES = [
         ('announcement', 'Announcement'),
@@ -378,6 +378,7 @@ class Notification(models.Model):
         ('in_app', 'In-App'),
         ('maintenance', 'Maintenance'),
     ]
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notifications', null=True, blank=True)
     title = models.CharField(max_length=255)
     message = models.TextField()
     notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES, default='in_app')
@@ -393,6 +394,13 @@ class Notification(models.Model):
         blank=True,
     )
     target_users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name='targeted_notifications')
+    announcement = models.ForeignKey(
+        'Announcement',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='notifications',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -618,22 +626,6 @@ class Investment(models.Model):
         return f"{self.plan_name} - {self.user.full_name}"
 
 
-class LoginHistory(models.Model):
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name='login_history',
-    )
-    ip_address = models.CharField(max_length=45)
-    device_info = models.CharField(max_length=200, blank=True)
-    location = models.CharField(max_length=200, blank=True)
-    is_successful = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Login by {self.user.full_name} at {self.created_at}"
-
-
 class Event(models.Model):
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
@@ -752,3 +744,330 @@ class Constitution(models.Model):
 
     def __str__(self):
         return f"{self.title} - {self.version}"
+
+
+class VolunteerApplication(models.Model):
+    full_name = models.CharField(max_length=100)
+    email = models.EmailField()
+    phone_number = models.CharField(max_length=20, blank=True)
+    skills = models.TextField(blank=True, help_text="e.g., Event Planning, Writing, Design")
+    availability = models.CharField(max_length=20, choices=[
+        ('weekdays', 'Weekdays'),
+        ('weekends', 'Weekends'),
+        ('flexible', 'Flexible'),
+    ], blank=True)
+    areas_of_interest = models.TextField(blank=True, help_text="Comma-separated values")
+    resume = models.FileField(upload_to='volunteer_resumes/', blank=True, null=True)
+    is_reviewed = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pending Review'),
+        ('accepted', 'Accepted'),
+        ('rejected', 'Rejected'),
+    ], default='pending')
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.full_name} - {self.email}"
+
+
+class NewsletterSubscription(models.Model):
+    email = models.EmailField(unique=True)
+    is_subscribed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.email
+
+
+class Newsletter(models.Model):
+    subject = models.CharField(max_length=200)
+    message = models.TextField()
+    sent_to_all = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.subject
+
+
+class ContactMessage(models.Model):
+    name = models.CharField(max_length=100)
+    email = models.EmailField()
+    subject = models.CharField(max_length=200)
+    message = models.TextField()
+    is_read = models.BooleanField(default=False)
+    responded = models.BooleanField(default=False)
+    response_text = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.subject} - {self.name}"
+
+
+class PageContent(models.Model):
+    PAGE_TYPES = [
+        ('about', 'About Us'),
+        ('organizational_structure', 'Organizational Structure'),
+        ('state_chapters', 'State Chapters'),
+        ('achievements', 'Achievements'),
+        ('executive_leadership', 'Executive Leadership'),
+        ('constitution', 'Constitution'),
+        ('refund_policy', 'Refund Policy'),
+        ('privacy_policy', 'Privacy Policy'),
+        ('terms_conditions', 'Terms & Conditions'),
+        ('cookie_policy', 'Cookie Policy'),
+        ('mission_vision', 'Mission & Vision'),
+    ]
+    slug = models.SlugField(max_length=100, unique=True)
+    page_type = models.CharField(max_length=50, choices=PAGE_TYPES, unique=True, blank=True, null=True)
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    is_published = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['title']
+
+    def __str__(self):
+        return self.title
+
+
+class Category(models.Model):
+    name = models.CharField(max_length=100)
+    slug = models.SlugField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name_plural = 'Categories'
+
+    def __str__(self):
+        return self.name
+
+
+class Post(models.Model):
+    POST_TYPES = [
+        ('news', 'News'),
+        ('blog', 'Blog'),
+    ]
+    title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=200, unique=True)
+    excerpt = models.TextField(blank=True, help_text="Short summary of the post")
+    content = models.TextField()
+    post_type = models.CharField(max_length=10, choices=POST_TYPES, default='news')
+    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='posts')
+    author = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='posts',
+    )
+    author_name = models.CharField(max_length=100, blank=True, help_text="Display name if no user author")
+    image = models.ImageField(upload_to='post_images/', blank=True, null=True)
+    is_published = models.BooleanField(default=True)
+    is_featured = models.BooleanField(default=False)
+    published_date = models.DateTimeField(null=True, blank=True)
+    view_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-published_date', '-created_at']
+
+    def __str__(self):
+        return self.title
+
+    @property
+    def author_display(self):
+        if self.author:
+            return self.author.full_name or self.author.username
+        return self.author_name or 'Admin'
+
+
+class Project(models.Model):
+    title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=200, unique=True)
+    description = models.TextField(help_text="Short description for listing")
+    content = models.TextField(help_text="Full project description")
+    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True, related_name='projects')
+    image = models.ImageField(upload_to='project_images/', blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    is_featured = models.BooleanField(default=False)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    location = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
+
+
+class SocialMediaLink(models.Model):
+    SOCIAL_CHOICES = [
+        ('facebook', 'Facebook'),
+        ('twitter', 'Twitter'),
+        ('instagram', 'Instagram'),
+        ('linkedin', 'LinkedIn'),
+        ('youtube', 'YouTube'),
+        ('tiktok', 'TikTok'),
+        ('whatsapp', 'WhatsApp'),
+        ('telegram', 'Telegram'),
+        ('github', 'GitHub'),
+        ('other', 'Other'),
+    ]
+    name = models.CharField(max_length=100, choices=SOCIAL_CHOICES)
+    url = models.URLField(max_length=200)
+    icon_class = models.CharField(max_length=100, default='social-icon', help_text="CSS class for the icon")
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0, help_text="Display order")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'name']
+
+    def __str__(self):
+        return self.get_name_display()
+
+
+class ExecutiveLeader(models.Model):
+    name = models.CharField(max_length=100)
+    position = models.CharField(max_length=100)
+    bio = models.TextField(blank=True)
+    photo = models.ImageField(upload_to='leadership_photos/', blank=True, null=True)
+    years_in_office = models.CharField(max_length=100, blank=True, help_text="e.g., '2020-present'")
+    email = models.EmailField(blank=True)
+    order = models.IntegerField(default=0, help_text="Display order")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'name']
+
+    def __str__(self):
+        return f"{self.name} - {self.position}"
+
+
+class StateChapter(models.Model):
+    state = models.CharField(max_length=100, unique=True)
+    coordinator = models.CharField(max_length=100)
+    email = models.EmailField(blank=True)
+    phone = models.CharField(max_length=20, blank=True)
+    address = models.TextField(blank=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'state']
+
+    def __str__(self):
+        return self.state
+
+
+class GalleryImage(models.Model):
+    MEDIA_TYPE_CHOICES = [
+        ('image', 'Image'),
+        ('video', 'Video'),
+    ]
+    title = models.CharField(max_length=200, blank=True)
+    description = models.TextField(blank=True)
+    image = models.FileField(upload_to='gallery_media/', blank=True, null=True)
+    media_type = models.CharField(max_length=10, choices=MEDIA_TYPE_CHOICES, default='image')
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm', '.mkv', '.ogg', '.ogv', '.flv', '.wmv']
+
+    class Meta:
+        ordering = ['order', '-created_at']
+
+    def __str__(self):
+        return self.title or f"Gallery Image {self.id}"
+
+    def is_video(self):
+        if self.media_type == 'video':
+            return True
+        if not self.image or not self.image.name:
+            return False
+        try:
+            name = self.image.name.lower()
+            if any(name.endswith(ext) for ext in self.VIDEO_EXTENSIONS):
+                return True
+            url = self.image.url.lower()
+            if '/video/upload/' in url:
+                return True
+        except Exception:
+            pass
+        return False
+
+    def save(self, *args, **kwargs):
+        if self.image:
+            detected = 'video' if self.is_video() else 'image'
+            if self.media_type != detected:
+                self.media_type = detected
+        super().save(*args, **kwargs)
+
+
+class Partner(models.Model):
+    name = models.CharField(max_length=200)
+    logo = models.ImageField(upload_to='partners/', blank=True, null=True)
+    website = models.URLField(blank=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', '-created_at']
+
+    def __str__(self):
+        return self.name
+
+
+class Sponsor(models.Model):
+    name = models.CharField(max_length=200)
+    logo = models.ImageField(upload_to='sponsors/', blank=True, null=True)
+    website = models.URLField(blank=True)
+    description = models.TextField(blank=True)
+    tier = models.CharField(max_length=20, choices=[('gold', 'Gold'), ('silver', 'Silver'), ('bronze', 'Bronze'), ('platinum', 'Platinum')], default='bronze')
+    is_active = models.BooleanField(default=True)
+    order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', '-created_at']
+
+    def __str__(self):
+        return self.name

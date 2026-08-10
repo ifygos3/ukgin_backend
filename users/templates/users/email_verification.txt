@@ -1,0 +1,18 @@
+Welcome to UKGIN!
+
+Thank you for registering with UKGIN. We're excited to have you join our global community dedicated to Igbo unity, culture, and development.
+
+To complete your registration and activate your account, please verify your email address by clicking the link below:
+
+{{ verify_url }}
+
+If the link above doesn't work, copy and paste it into your browser.
+
+---
+Didn't receive this email?
+
+Please check your spam or junk folder. Sometimes automated emails end up there. If you still can't find it, you can request a new verification email from the login page.
+
+If you did not create an account with UKGIN, you can safely ignore this email.
+
+© {% now 'Y' %} United Kingdom of Great Igbo Nation. All rights reserved.

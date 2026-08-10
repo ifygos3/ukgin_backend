@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution
+from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution, Announcement, VolunteerApplication, NewsletterSubscription, Newsletter, ContactMessage, PageContent, Category, Post, Project, SocialMediaLink, ExecutiveLeader, GalleryImage, StateChapter, Partner, Sponsor
 
 
 ROLE_CHOICES = [
@@ -13,7 +13,7 @@ ROLE_CHOICES = [
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'password', 'phone_number', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'address', 'first_name', 'last_name', 'full_name', 'role', 'is_suspended', 'is_banned', 'kyc_status', 'total_donations', 'total_deposits', 'total_withdrawals', 'referred_by', 'referral_code', 'ip_address', 'device_info', 'last_login_ip', 'is_active', 'is_staff', 'date_joined', 'created_at', 'updated_at']
+        fields = ['id', 'username', 'email', 'password', 'phone_number', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'signature_data', 'address', 'first_name', 'last_name', 'full_name', 'role', 'is_suspended', 'is_banned', 'kyc_status', 'total_donations', 'total_deposits', 'total_withdrawals', 'referred_by', 'referral_code', 'ip_address', 'device_info', 'last_login_ip', 'is_active', 'is_staff', 'email_verified', 'date_joined', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at', 'date_joined']
         extra_kwargs = {
             'password': {'write_only': True},
@@ -132,10 +132,15 @@ class KYCDocumentSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'document_type', 'document_file', 'document_file_url', 'is_verified', 'verified_by', 'rejection_reason', 'created_at', 'updated_at']
 
     def get_document_file_url(self, obj):
+        if not obj.document_file:
+            return None
+        file_url = obj.document_file.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
         request = self.context.get('request')
-        if obj.document_file and request:
-            return request.build_absolute_uri(obj.document_file.url)
-        return obj.document_file.url if obj.document_file else None
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
 
 
 class DonationSerializer(serializers.ModelSerializer):
@@ -147,10 +152,15 @@ class DonationSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'amount', 'payment_method', 'bank_name', 'account_number', 'crypto_type', 'wallet_address', 'card_type', 'card_last_four', 'card_holder', 'card_expiry', 'transaction_reference', 'proof_of_donation', 'proof_of_donation_url', 'notes', 'is_approved', 'approved_by', 'created_at', 'updated_at']
 
     def get_proof_of_donation_url(self, obj):
+        if not obj.proof_of_donation:
+            return None
+        file_url = obj.proof_of_donation.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
         request = self.context.get('request')
-        if obj.proof_of_donation and request:
-            return request.build_absolute_uri(obj.proof_of_donation.url)
-        return obj.proof_of_donation.url if obj.proof_of_donation else None
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
 
 
 class DepositSerializer(serializers.ModelSerializer):
@@ -162,10 +172,15 @@ class DepositSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'amount', 'payment_method', 'bank_name', 'account_number', 'crypto_type', 'wallet_address', 'card_type', 'card_last_four', 'card_holder', 'card_expiry', 'transaction_reference', 'proof_of_payment', 'proof_of_payment_url', 'status', 'notes', 'approved_by', 'created_at', 'updated_at']
 
     def get_proof_of_payment_url(self, obj):
+        if not obj.proof_of_payment:
+            return None
+        file_url = obj.proof_of_payment.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
         request = self.context.get('request')
-        if obj.proof_of_payment and request:
-            return request.build_absolute_uri(obj.proof_of_payment.url)
-        return obj.proof_of_payment.url if obj.proof_of_payment else None
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
 
 
 class WithdrawalSerializer(serializers.ModelSerializer):
@@ -174,14 +189,6 @@ class WithdrawalSerializer(serializers.ModelSerializer):
     class Meta:
         model = Withdrawal
         fields = ['id', 'user', 'amount', 'payment_method', 'bank_name', 'account_number', 'crypto_type', 'wallet_address', 'card_type', 'card_last_four', 'card_holder', 'card_expiry', 'transaction_reference', 'status', 'notes', 'processed_by', 'created_at', 'updated_at']
-
-
-class NotificationSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-
-    class Meta:
-        model = Notification
-        fields = ['id', 'user', 'title', 'message', 'notification_type', 'is_read', 'created_at']
 
 
 class SupportTicketSerializer(serializers.ModelSerializer):
@@ -257,7 +264,7 @@ class DashboardStatsSerializer(UserStatsSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'full_name', 'phone_number', 'address', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'role', 'kyc_status', 'signature', 'created_at']
+        fields = ['id', 'username', 'email', 'full_name', 'phone_number', 'address', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'role', 'kyc_status', 'email_verified', 'signature', 'created_at']
         read_only_fields = ['id', 'created_at']
 
 
@@ -324,16 +331,34 @@ class DocumentSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'description', 'file', 'file_url', 'category', 'is_public', 'is_receipt', 'created_at', 'updated_at']
 
     def get_file_url(self, obj):
+        if not obj.file:
+            return None
+        file_url = obj.file.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
         request = self.context.get('request')
-        if obj.file and request:
-            return request.build_absolute_uri(obj.file.url)
-        return obj.file.url if obj.file else None
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
 
 
 class ConstitutionSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Constitution
-        fields = ['id', 'version', 'title', 'content', 'file', 'is_current', 'effective_date', 'created_at', 'updated_at']
+        fields = ['id', 'version', 'title', 'content', 'file', 'file_url', 'is_current', 'effective_date', 'created_at', 'updated_at']
+
+    def get_file_url(self, obj):
+        if not obj.file:
+            return None
+        file_url = obj.file.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
 
 
 class AnnouncementSerializer(serializers.ModelSerializer):
@@ -352,3 +377,292 @@ class PublicAnnouncementSerializer(serializers.ModelSerializer):
     class Meta:
         model = Announcement
         fields = ['id', 'title', 'message', 'created_at']
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    announcement = AnnouncementSerializer(read_only=True)
+    announcement_id = serializers.PrimaryKeyRelatedField(queryset=Announcement.objects.all(), source='announcement', write_only=True, required=False, allow_null=True)
+
+    class Meta:
+        model = Notification
+        fields = ['id', 'user', 'title', 'message', 'notification_type', 'is_read', 'announcement', 'announcement_id', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class VolunteerApplicationSerializer(serializers.ModelSerializer):
+    resume_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VolunteerApplication
+        fields = ['id', 'full_name', 'email', 'phone_number', 'skills', 'availability', 'areas_of_interest', 'resume', 'resume_url', 'is_reviewed', 'status', 'notes', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'is_reviewed', 'status', 'notes', 'created_at', 'updated_at']
+
+    def get_resume_url(self, obj):
+        if not obj.resume:
+            return None
+        file_url = obj.resume.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
+
+
+class PartnerSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Partner
+        fields = ['id', 'name', 'logo', 'logo_url', 'website', 'description', 'is_active', 'order', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_logo_url(self, obj):
+        if not obj.logo:
+            return None
+        file_url = obj.logo.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            try:
+                return request.build_absolute_uri(file_url)
+            except Exception:
+                return file_url
+        return file_url
+
+
+class SponsorSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Sponsor
+        fields = ['id', 'name', 'logo', 'logo_url', 'website', 'description', 'tier', 'is_active', 'order', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_logo_url(self, obj):
+        if not obj.logo:
+            return None
+        file_url = obj.logo.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            try:
+                return request.build_absolute_uri(file_url)
+            except Exception:
+                return file_url
+        return file_url
+
+
+class StateChapterSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StateChapter
+        fields = ['id', 'state', 'coordinator', 'email', 'phone', 'address', 'description', 'is_active', 'order', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class NewsletterSubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NewsletterSubscription
+        fields = ['id', 'email', 'is_subscribed', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class NewsletterSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Newsletter
+        fields = ['id', 'subject', 'message', 'sent_to_all', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class ContactMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactMessage
+        fields = ['id', 'name', 'email', 'subject', 'message', 'is_read', 'responded', 'response_text', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'is_read', 'responded', 'response_text', 'created_at', 'updated_at']
+
+
+class ContactMessageAdminSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactMessage
+        fields = ['id', 'name', 'email', 'subject', 'message', 'is_read', 'responded', 'response_text', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class PageContentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PageContent
+        fields = ['id', 'slug', 'page_type', 'title', 'content', 'is_published', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'slug', 'description', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class PostSerializer(serializers.ModelSerializer):
+    author_name_display = serializers.SerializerMethodField()
+    category_name = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Post
+        fields = ['id', 'title', 'slug', 'excerpt', 'content', 'post_type', 'category', 'category_name', 'author', 'author_name', 'author_name_display', 'image', 'image_url', 'is_published', 'is_featured', 'published_date', 'view_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'view_count', 'created_at', 'updated_at']
+
+    def get_author_name_display(self, obj):
+        if obj.author:
+            return obj.author.full_name or obj.author.username
+        return obj.author_name or 'Admin'
+
+    def get_category_name(self, obj):
+        return obj.category.name if obj.category else None
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        file_url = obj.image.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
+
+
+class ProjectSerializer(serializers.ModelSerializer):
+    category_name = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Project
+        fields = ['id', 'title', 'slug', 'description', 'content', 'category', 'category_name', 'image', 'image_url', 'is_active', 'is_featured', 'start_date', 'end_date', 'location', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_category_name(self, obj):
+        return obj.category.name if obj.category else None
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        file_url = obj.image.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
+
+
+class SocialMediaLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SocialMediaLink
+        fields = ['id', 'name', 'url', 'icon_class', 'is_active', 'order', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class ExecutiveLeaderSerializer(serializers.ModelSerializer):
+    photo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ExecutiveLeader
+        fields = ['id', 'name', 'position', 'bio', 'photo', 'photo_url', 'years_in_office', 'email', 'order', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_photo_url(self, obj):
+        if not obj.photo:
+            return None
+        file_url = obj.photo.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url
+
+
+class GalleryImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    media_url = serializers.SerializerMethodField()
+    caption = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GalleryImage
+        fields = ['id', 'title', 'description', 'caption', 'image', 'image_url', 'url', 'media_url', 'media_type', 'is_active', 'order', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'media_type']
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        if obj.image:
+            raw_url = obj.image.url
+            if raw_url.startswith(('http://', 'https://')):
+                return raw_url
+            if request:
+                try:
+                    return request.build_absolute_uri(raw_url)
+                except Exception:
+                    return raw_url
+            return raw_url
+        return None
+
+    def get_url(self, obj):
+        return self.get_image_url(obj)
+
+    def get_media_url(self, obj):
+        request = self.context.get('request')
+        if not obj.image:
+            return None
+        raw_url = obj.image.url
+        if raw_url.startswith(('http://', 'https://')):
+            is_vid = obj.media_type == 'video'
+            if '/video/upload/' not in raw_url and is_vid:
+                raw_url = raw_url.replace('/image/upload/', '/video/upload/', 1)
+            if is_vid and '/video/upload/' in raw_url:
+                separator = '&' if '?' in raw_url else '?'
+                raw_url = f"{raw_url}{separator}fl_mp4,q_auto,f_auto"
+            return raw_url
+        if request:
+            try:
+                return request.build_absolute_uri(raw_url)
+            except Exception:
+                return raw_url
+        return raw_url
+
+    def create(self, validated_data):
+        caption = validated_data.pop('caption', None)
+        if caption and not validated_data.get('description'):
+            validated_data['description'] = caption
+        validated_data.setdefault('is_active', True)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        caption = validated_data.pop('caption', None)
+        if caption is not None and not validated_data.get('description'):
+            validated_data['description'] = caption
+        return super().update(instance, validated_data)
+
+
+class VolunteerApplicationAdminSerializer(serializers.ModelSerializer):
+    resume_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VolunteerApplication
+        fields = ['id', 'full_name', 'email', 'phone_number', 'skills', 'availability', 'areas_of_interest', 'resume', 'resume_url', 'is_reviewed', 'status', 'notes', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_resume_url(self, obj):
+        if not obj.resume:
+            return None
+        file_url = obj.resume.url
+        if file_url.startswith(('http://', 'https://')):
+            return file_url
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(file_url)
+        return file_url

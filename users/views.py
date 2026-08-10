@@ -3,24 +3,29 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import action, api_view, permission_classes
 from django.db.models import Sum, Count, Q, Avg
+from django.db import OperationalError
 from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth import get_user_model
-from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution, Announcement
+from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution, Announcement, VolunteerApplication, NewsletterSubscription, Newsletter, ContactMessage, PageContent, Category, Post, Project, SocialMediaLink, ExecutiveLeader, GalleryImage, StateChapter, Partner, Sponsor
 from .serializers import (
     UserSerializer, RegisterSerializer, WalletSerializer, WalletTransactionSerializer,
     KYCDocumentSerializer, DonationSerializer, DepositSerializer, WithdrawalSerializer,
     NotificationSerializer, SupportTicketSerializer,
     TicketReplySerializer, ReferralSerializer, AuditLogSerializer, SystemSettingsSerializer,
     LoginHistorySerializer, DashboardStatsSerializer,
-     EventSerializer, EventResponseSerializer, PublicEventResponseSerializer, DocumentCategorySerializer, DocumentSerializer, ConstitutionSerializer,
-     AnnouncementSerializer, PublicAnnouncementSerializer,
+    EventSerializer, EventResponseSerializer, PublicEventResponseSerializer, PublicUserSerializer, DocumentCategorySerializer, DocumentSerializer, ConstitutionSerializer,
+    AnnouncementSerializer, PublicAnnouncementSerializer,
+    VolunteerApplicationSerializer, VolunteerApplicationAdminSerializer, NewsletterSubscriptionSerializer, NewsletterSerializer, ContactMessageSerializer, ContactMessageAdminSerializer, PageContentSerializer, CategorySerializer, PostSerializer, ProjectSerializer, SocialMediaLinkSerializer, ExecutiveLeaderSerializer, GalleryImageSerializer, StateChapterSerializer, PartnerSerializer, SponsorSerializer,
 )
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.tokens import UntypedToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMessage
+from django.template.loader import render_to_string
 from django.conf import settings
 import json
 import time
@@ -74,40 +79,57 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         remember_me = data.get('remember_me', False)
 
         if not identifier:
+            print('LOGIN DEBUG - no identifier')
             return Response({'detail': 'Username, email, or phone number is required'}, status=400)
         if not password:
+            print('LOGIN DEBUG - no password')
             return Response({'detail': 'Password is required'}, status=400)
 
         user = None
-        if identifier:
-            user = User.objects.filter(username=identifier).first()
-            if not user:
-                user = User.objects.filter(email=identifier).first()
-            if not user:
-                user = User.objects.filter(phone_number=identifier).first()
+        try:
+            if identifier:
+                user = User.objects.filter(username=identifier).first()
+                print('LOGIN DEBUG - username lookup:', user.username if user else None)
+                if not user:
+                    user = User.objects.filter(email=identifier).first()
+                    print('LOGIN DEBUG - email lookup:', user.username if user else None)
+                if not user:
+                    user = User.objects.filter(phone_number=identifier).first()
+                    print('LOGIN DEBUG - phone lookup:', user.username if user else None)
+        except OperationalError:
+            print('LOGIN DEBUG - database connection error')
+            return Response({'detail': 'Database connection error. Please try again later.'}, status=500)
 
         if not user:
-            AuditLog.objects.create(
-                admin_user=None,
-                action='login_failed',
-                details=f'Failed login attempt for identifier: {identifier}',
-                ip_address=request.META.get('REMOTE_ADDR', ''),
-            )
+            print('LOGIN DEBUG - user not found for identifier:', repr(identifier))
+            try:
+                AuditLog.objects.create(
+                    admin_user=None,
+                    action='login_failed',
+                    details=f'Failed login attempt for identifier: {identifier}',
+                    ip_address=request.META.get('REMOTE_ADDR', ''),
+                )
+            except OperationalError:
+                pass
             return Response({'detail': 'Invalid credentials'}, status=400)
 
+        print('LOGIN DEBUG - password check result:', user.check_password(password))
         if not user.check_password(password):
-            AuditLog.objects.create(
-                admin_user=user,
-                action='login_failed',
-                details=f'Failed password attempt for user: {user.username}',
-                ip_address=request.META.get('REMOTE_ADDR', ''),
-            )
-            LoginHistory.objects.create(
-                user=user,
-                ip_address=request.META.get('REMOTE_ADDR', ''),
-                device_info=request.META.get('HTTP_USER_AGENT', ''),
-                is_successful=False,
-            )
+            try:
+                AuditLog.objects.create(
+                    admin_user=user,
+                    action='login_failed',
+                    details=f'Failed password attempt for user: {user.username}',
+                    ip_address=request.META.get('REMOTE_ADDR', ''),
+                )
+                LoginHistory.objects.create(
+                    user=user,
+                    ip_address=request.META.get('REMOTE_ADDR', ''),
+                    device_info=request.META.get('HTTP_USER_AGENT', ''),
+                    is_successful=False,
+                )
+            except OperationalError:
+                pass
             return Response({'detail': 'Invalid credentials'}, status=400)
 
         if user.is_suspended:
@@ -116,6 +138,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             return Response({'detail': 'Your account has been banned. Please contact support.'}, status=403)
         if not user.is_active:
             return Response({'detail': 'Your account has been deactivated. Please contact support.'}, status=403)
+        if not user.email_verified and not (user.role in ('admin', 'super_admin') or user.is_staff):
+            return Response({'detail': 'Please verify your email before logging in. Check your inbox for the verification link.'}, status=403)
 
         if remember_me:
             access_token_lifetime = timedelta(days=30)
@@ -166,7 +190,7 @@ class UserViewSet(viewsets.ModelViewSet):
         elif self.action == 'create':
             permission_classes = [permissions.AllowAny]
         else:
-            permission_classes = [permissions.AllowAny]
+            permission_classes = [permissions.IsAuthenticated]
         return [p() for p in permission_classes]
 
     def create(self, request, *args, **kwargs):
@@ -175,6 +199,18 @@ class UserViewSet(viewsets.ModelViewSet):
         user = serializer.save()
         Wallet.objects.get_or_create(user=user)
         Referral.objects.filter(referred_user=user).update(status='completed')
+        try:
+            token = RefreshToken.for_user(user)
+            verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
+            send_mail(
+                'UKGIN - Verify Your Email',
+                f'Click the link to verify your email: {verification_url}',
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=True,
+            )
+        except Exception:
+            pass
         AuditLog.objects.create(
             admin_user=request.user if request.user.is_authenticated else None,
             action='user_create',
@@ -244,37 +280,6 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response({'status': 'success', 'message': f'User {user.username} suspended'})
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
-    def unsuspend(self, request, pk=None):
-        user = self.get_object()
-        user.is_suspended = False
-        user.is_active = True
-        user.save()
-        AuditLog.objects.create(
-            admin_user=request.user,
-            action='user_unsuspend',
-            target_user=user,
-            details=f'User {user.username} unsuspended',
-            ip_address=request.META.get('REMOTE_ADDR', ''),
-        )
-        return Response({'status': 'success', 'message': f'User {user.username} unsuspended'})
-
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
-    def unban(self, request, pk=None):
-        user = self.get_object()
-        user.is_banned = False
-        user.is_active = True
-        user.is_suspended = False
-        user.save()
-        AuditLog.objects.create(
-            admin_user=request.user,
-            action='user_unban',
-            target_user=user,
-            details=f'User {user.username} unbanned',
-            ip_address=request.META.get('REMOTE_ADDR', ''),
-        )
-        return Response({'status': 'success', 'message': f'User {user.username} unbanned'})
-
-    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def ban(self, request, pk=None):
         user = self.get_object()
         user.is_banned = True
@@ -289,6 +294,37 @@ class UserViewSet(viewsets.ModelViewSet):
             ip_address=request.META.get('REMOTE_ADDR', ''),
         )
         return Response({'status': 'success', 'message': f'User {user.username} banned'})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def unban(self, request, pk=None):
+        user = self.get_object()
+        user.is_banned = False
+        user.is_suspended = False
+        user.is_active = True
+        user.save()
+        AuditLog.objects.create(
+            admin_user=request.user,
+            action='user_unban',
+            target_user=user,
+            details=f'User {user.username} unbanned',
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+        )
+        return Response({'status': 'success', 'message': f'User {user.username} unbanned'})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
+    def unsuspend(self, request, pk=None):
+        user = self.get_object()
+        user.is_suspended = False
+        user.is_active = True
+        user.save()
+        AuditLog.objects.create(
+            admin_user=request.user,
+            action='user_unsuspend',
+            target_user=user,
+            details=f'User {user.username} unsuspended',
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+        )
+        return Response({'status': 'success', 'message': f'User {user.username} unsuspended'})
 
     @action(detail=True, methods=['post'], permission_classes=[IsAdminUser])
     def reset_password(self, request, pk=None):
@@ -687,7 +723,7 @@ class WithdrawalViewSet(viewsets.ModelViewSet):
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
-    queryset = Notification.objects.all().order_by('-created_at')
+    queryset = Notification.objects.select_related('user', 'announcement').all().order_by('-created_at')
     serializer_class = NotificationSerializer
     pagination_class = StandardPagination
     permission_classes = [IsAdminUser]
@@ -706,7 +742,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 
 class SupportTicketViewSet(viewsets.ModelViewSet):
-    queryset = SupportTicket.objects.all().order_by('-created_at')
+    queryset = SupportTicket.objects.select_related('user', 'assigned_to').all().order_by('-created_at')
     serializer_class = SupportTicketSerializer
     pagination_class = StandardPagination
     permission_classes = [IsAdminOrSupport]
@@ -772,7 +808,7 @@ class ReferralViewSet(viewsets.ModelViewSet):
 
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = AuditLog.objects.all().order_by('-created_at')
+    queryset = AuditLog.objects.select_related('user').all().order_by('-created_at')
     serializer_class = AuditLogSerializer
     pagination_class = StandardPagination
     permission_classes = [IsAdminUser]
@@ -814,7 +850,7 @@ class SystemSettingsViewSet(viewsets.ModelViewSet):
 
 
 class LoginHistoryViewSet(viewsets.ModelViewSet):
-    queryset = LoginHistory.objects.all().order_by('-created_at')
+    queryset = LoginHistory.objects.select_related('user').all().order_by('-created_at')
     serializer_class = LoginHistorySerializer
     pagination_class = StandardPagination
     permission_classes = [IsAdminUser]
@@ -841,7 +877,7 @@ class DashboardStatsView(APIView):
         pending_kyc = User.objects.filter(kyc_status='pending').count()
         approved_kyc = User.objects.filter(kyc_status='approved').count()
         total_donations = Donation.objects.filter(is_approved=True).aggregate(total=Sum('amount'))['total'] or 0
-        total_deposits = Deposit.objects.filter(status='approved').aggregate(total=Sum('amount'))['total'] or 0
+        total_deposits = Deposit.objects.aggregate(total=Sum('amount'))['total'] or 0
         pending_deposits = Deposit.objects.filter(status='pending').aggregate(total=Sum('amount'))['total'] or 0
         approved_deposits = Deposit.objects.filter(status='approved').aggregate(total=Sum('amount'))['total'] or 0
         monthly_revenue = Donation.objects.filter(
@@ -973,50 +1009,7 @@ class UserActivityView(APIView):
         return Response(data)
 
 
-class ExportReportView(APIView):
-    permission_classes = [IsAdminUser]
 
-    def get(self, request):
-        report_type = request.query_params.get('type', 'daily')
-        export_format = request.query_params.get('format', 'json')
-        now = timezone.now()
-
-        if report_type == 'daily':
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        elif report_type == 'weekly':
-            start = now - timedelta(days=7)
-        elif report_type == 'monthly':
-            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        elif report_type == 'yearly':
-            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
-        else:
-            start = now - timedelta(days=30)
-
-        end_date = now
-
-        data = {
-            'report_type': report_type,
-            'period': {'start': str(start), 'end': str(end_date)},
-            'total_users': User.objects.filter(date_joined__gte=start, date_joined__lte=end_date).count(),
-            'total_deposits': Deposit.objects.filter(created_at__gte=start, created_at__lte=end_date, status='approved').count(),
-            'total_withdrawals': Withdrawal.objects.filter(created_at__gte=start, created_at__lte=end_date).count(),
-            'total_donations': Donation.objects.filter(created_at__gte=start, created_at__lte=end_date, is_approved=True).count(),
-            'total_revenue': float(Donation.objects.filter(created_at__gte=start, created_at__lte=end_date, is_approved=True).aggregate(total=Sum('amount'))['total'] or 0),
-            'total_profit': float(Donation.objects.filter(created_at__gte=start, created_at__lte=end_date, is_approved=True).aggregate(total=Sum('amount'))['total'] or 0) - float(Withdrawal.objects.filter(created_at__gte=start, created_at__lte=end_date, status='approved').aggregate(total=Sum('amount'))['total'] or 0),
-        }
-
-        if export_format == 'csv':
-            import csv
-            from django.http import HttpResponse
-            response = HttpResponse(content_type='text/csv')
-            response['Content-Disposition'] = f'attachment; filename="{report_type}_report.csv"'
-            writer = csv.writer(response)
-            writer.writerow(['Metric', 'Value'])
-            for key, value in data.items():
-                writer.writerow([key, value])
-            return response
-
-        return Response(data)
 
 
 class CreateUserAPIView(generics.CreateAPIView):
@@ -1025,11 +1018,51 @@ class CreateUserAPIView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        Wallet.objects.get_or_create(user=user)
-        return Response({'user': UserSerializer(user).data}, status=status.HTTP_201_CREATED)
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            user = serializer.save()
+            Wallet.objects.get_or_create(user=user)
+        except OperationalError:
+            return Response({'detail': 'Database connection error. Please try again later.'}, status=500)
+        except Exception as e:
+            print(f'[Registration] serializer_errors={serializer.errors if hasattr(serializer, "errors") else "N/A"}, error={type(e).__name__}: {e}')
+            raise
+        token = RefreshToken.for_user(user)
+        verify_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
+        print(f'[RegistrationEmail] Attempting email to={user.email}, from={settings.DEFAULT_FROM_EMAIL}, backend={settings.EMAIL_BACKEND}')
+        try:
+            html_message = render_to_string('users/email_verification.html', {'verify_url': verify_url})
+            text_message = render_to_string('users/email_verification.txt', {'verify_url': verify_url})
+            email = EmailMessage(
+                'UKGIN - Verify Your Email',
+                text_message,
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                headers={'Reply-To': settings.DEFAULT_FROM_EMAIL, 'X-Mailer': 'UKGIN'},
+            )
+            email.content_subtype = 'html'
+            email.body = html_message
+            email.send(fail_silently=False)
+            print(f'[RegistrationEmail] Email sent successfully to={user.email}')
+        except OperationalError:
+            print('Registration DB error')
+            return Response({'detail': 'Database connection error. Please try again later.'}, status=500)
+        except Exception as e:
+            print(f'[RegistrationEmail] FAILED email={user.email}, error={type(e).__name__}: {e}')
+        return Response({'user': UserSerializer(user).data, 'detail': 'Registration successful. Please verify your email.'}, status=status.HTTP_201_CREATED)
+
+
+class DeleteMyAccountView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        user = request.user
+        try:
+            user.delete()
+            return Response({'detail': 'Account deleted successfully'}, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({'detail': f'Failed to delete account: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class UserListView(APIView):
@@ -1105,7 +1138,14 @@ class PasswordResetRequestView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        email = request.data.get('email')
+        data = request.data
+        if isinstance(data, str):
+            import json
+            try:
+                data = json.loads(data)
+            except Exception:
+                data = {}
+        email = data.get('email')
         if not email:
             return Response({'detail': 'Email is required'}, status=400)
         try:
@@ -1116,16 +1156,28 @@ class PasswordResetRequestView(APIView):
         token = RefreshToken.for_user(user)
         reset_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/reset-password?token={str(token.access_token)}&email={user.email}"
 
+        print(f'[PasswordReset] Attempting to send email to={user.email}, from={settings.DEFAULT_FROM_EMAIL}, backend={settings.EMAIL_BACKEND}, host={settings.EMAIL_HOST}:{settings.EMAIL_PORT}')
         try:
-            send_mail(
+            html_message = render_to_string('users/password_reset.html', {'reset_url': reset_url})
+            text_message = render_to_string('users/password_reset.txt', {'reset_url': reset_url})
+            email = EmailMessage(
                 'UKGIN Password Reset',
-                f'Click the link to reset your password: {reset_url}',
+                text_message,
                 settings.DEFAULT_FROM_EMAIL,
                 [user.email],
-                fail_silently=False,
+                headers={'Reply-To': settings.DEFAULT_FROM_EMAIL, 'X-Mailer': 'UKGIN'},
             )
-        except Exception:
-            pass
+            email.content_subtype = 'html'
+            email.body = html_message
+            email.send(fail_silently=False)
+            print(f'[PasswordReset] Email sent successfully to={user.email}')
+        except Exception as e:
+            print(f'[PasswordReset] FAILED email={user.email}, error={type(e).__name__}: {e}')
+            return Response({
+                'detail': 'Password reset email could not be sent. Please check your email configuration or try again later.',
+                'error': str(e),
+                'error_type': type(e).__name__,
+            }, status=500)
 
         AuditLog.objects.create(
             admin_user=user,
@@ -1141,10 +1193,17 @@ class PasswordResetConfirmView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        email = request.data.get('email')
-        token = request.data.get('token')
-        new_password = request.data.get('new_password')
-        confirm_password = request.data.get('confirm_password')
+        data = request.data
+        if isinstance(data, str):
+            import json
+            try:
+                data = json.loads(data)
+            except Exception:
+                data = {}
+        email = data.get('email')
+        token = data.get('token')
+        new_password = data.get('new_password')
+        confirm_password = data.get('confirm_password')
 
         if not all([email, token, new_password, confirm_password]):
             return Response({'detail': 'All fields are required'}, status=400)
@@ -1184,8 +1243,224 @@ class UserProfileView(APIView):
         return Response({'status': 'error', 'errors': serializer.errors}, status=400)
 
 
-class PublicEventsView(generics.ListAPIView):
+class AdminEventViewSet(viewsets.ModelViewSet):
     queryset = Event.objects.all().order_by('-event_date')
+    serializer_class = EventSerializer
+    permission_classes = [IsAdminUser]
+
+
+class AdminAnnouncementViewSet(viewsets.ModelViewSet):
+    queryset = Announcement.objects.all().order_by('-created_at')
+    serializer_class = AnnouncementSerializer
+    permission_classes = [IsAdminUser]
+
+    def perform_create(self, serializer):
+        serializer.save(author=self.request.user)
+
+
+class AdminDocumentCategoryViewSet(viewsets.ModelViewSet):
+    queryset = DocumentCategory.objects.all().order_by('name')
+    serializer_class = DocumentCategorySerializer
+    permission_classes = [IsAdminUser]
+
+
+class AdminDocumentViewSet(viewsets.ModelViewSet):
+    queryset = Document.objects.all().order_by('-created_at')
+    serializer_class = DocumentSerializer
+    permission_classes = [IsAdminUser]
+
+
+class AdminConstitutionViewSet(viewsets.ModelViewSet):
+    queryset = Constitution.objects.all().order_by('-effective_date', '-created_at')
+    serializer_class = ConstitutionSerializer
+    permission_classes = [IsAdminUser]
+
+    def get_queryset(self):
+        return self.queryset
+
+
+class VolunteerApplicationViewSet(viewsets.ModelViewSet):
+    queryset = VolunteerApplication.objects.all().order_by('-created_at')
+    serializer_class = VolunteerApplicationSerializer
+    permission_classes = [IsAdminUser]
+
+
+class NewsletterSubscriptionViewSet(viewsets.ModelViewSet):
+    queryset = NewsletterSubscription.objects.all().order_by('-created_at')
+    serializer_class = NewsletterSubscriptionSerializer
+    permission_classes = [IsAdminUser]
+
+    @action(detail=False, methods=['post'])
+    def subscribe(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'detail': 'Email is required'}, status=400)
+        obj, created = NewsletterSubscription.objects.get_or_create(email=email)
+        obj.is_subscribed = True
+        obj.save()
+        print(f'[NewsletterSubscribe] Attempting email to={email}, from={settings.DEFAULT_FROM_EMAIL}, backend={settings.EMAIL_BACKEND}')
+        email_body = 'Thank you for subscribing to the UKGIN newsletter. You will now receive our latest updates and announcements.'
+        print(f'[NewsletterSubscribe] Email content: to={email}, subject=UKGIN Newsletter Subscription Confirmed, body={email_body}')
+        try:
+            msg = EmailMessage(
+                'UKGIN Newsletter Subscription Confirmed',
+                email_body,
+                settings.DEFAULT_FROM_EMAIL,
+                [email],
+                headers={'Reply-To': settings.DEFAULT_FROM_EMAIL, 'X-Mailer': 'UKGIN'},
+            )
+            msg.content_subtype = 'html'
+            msg.body = f'<html><body><p>{email_body}</p></body></html>'
+            msg.send(fail_silently=False)
+            print(f'[NewsletterSubscribe] Email sent successfully to={email}')
+        except Exception as e:
+            print(f'[NewsletterSubscribe] FAILED email={email}, error={type(e).__name__}: {e}')
+            return Response({
+                'detail': 'Subscription saved but confirmation email could not be sent. Please check your email configuration.',
+                'error': str(e),
+                'error_type': type(e).__name__,
+            }, status=500)
+        return Response({'detail': 'Subscribed successfully'})
+
+    @action(detail=False, methods=['post'])
+    def unsubscribe(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'detail': 'Email is required'}, status=400)
+        try:
+            obj = NewsletterSubscription.objects.get(email=email)
+            obj.is_subscribed = False
+            obj.save()
+            return Response({'detail': 'Unsubscribed successfully'})
+        except NewsletterSubscription.DoesNotExist:
+            return Response({'detail': 'Email not found'}, status=404)
+
+
+class NewsletterViewSet(viewsets.ModelViewSet):
+    queryset = Newsletter.objects.all().order_by('-created_at')
+    serializer_class = NewsletterSerializer
+    permission_classes = [IsAdminUser]
+
+    @action(detail=True, methods=['post'])
+    def send(self, request, pk=None):
+        newsletter = self.get_object()
+        subscribers = NewsletterSubscription.objects.filter(is_subscribed=True)
+        recipient_list = [sub.email for sub in subscribers]
+        if not recipient_list:
+            return Response({'detail': 'No subscribers found'}, status=400)
+        try:
+            send_mail(
+                newsletter.subject,
+                newsletter.message,
+                settings.DEFAULT_FROM_EMAIL,
+                recipient_list,
+                fail_silently=False,
+            )
+            newsletter.sent_to_all = True
+            newsletter.save()
+            return Response({'detail': f'Newsletter sent to {len(recipient_list)} subscribers'})
+        except Exception as e:
+            return Response({'detail': f'Failed to send newsletter: {str(e)}'}, status=500)
+
+
+class ContactMessageViewSet(viewsets.ModelViewSet):
+    queryset = ContactMessage.objects.all().order_by('-created_at')
+    serializer_class = ContactMessageSerializer
+    permission_classes = [IsAdminUser]
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        was_responded = instance.responded
+        response = super().partial_update(request, *args, **kwargs)
+        updated_instance = self.get_object()
+        if not was_responded and updated_instance.responded and updated_instance.response_text:
+            try:
+                send_mail(
+                    f'UKGIN - Reply to your message: {updated_instance.subject}',
+                    f'Dear {updated_instance.name},\n\nThank you for reaching out to us. Here is our response:\n\n{updated_instance.response_text}\n\nBest regards,\nUKGIN Team',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [updated_instance.email],
+                    fail_silently=True,
+                )
+            except Exception:
+                pass
+        return response
+
+
+class PageContentViewSet(viewsets.ModelViewSet):
+    queryset = PageContent.objects.all().order_by('title')
+    serializer_class = PageContentSerializer
+    permission_classes = [IsAdminUser]
+
+
+class CategoryViewSet(viewsets.ModelViewSet):
+    queryset = Category.objects.all().order_by('name')
+    serializer_class = CategorySerializer
+    permission_classes = [IsAdminUser]
+
+
+class PostViewSet(viewsets.ModelViewSet):
+    queryset = Post.objects.select_related('author', 'category').all().order_by('-published_date', '-created_at')
+    serializer_class = PostSerializer
+    permission_classes = [IsAdminUser]
+
+    def get_queryset(self):
+        qs = self.queryset
+        if self.request.query_params.get('published') == 'true':
+            qs = qs.filter(is_published=True)
+        return qs
+
+
+class ProjectViewSet(viewsets.ModelViewSet):
+    queryset = Project.objects.select_related('category').all().order_by('-created_at')
+    serializer_class = ProjectSerializer
+    permission_classes = [IsAdminUser]
+
+    def get_queryset(self):
+        qs = self.queryset
+        if self.request.query_params.get('active') == 'true':
+            qs = qs.filter(is_active=True)
+        return qs
+
+
+class SocialMediaLinkViewSet(viewsets.ModelViewSet):
+    queryset = SocialMediaLink.objects.all().order_by('order', 'name')
+    serializer_class = SocialMediaLinkSerializer
+    permission_classes = [IsAdminUser]
+
+
+class GalleryImageViewSet(viewsets.ModelViewSet):
+    queryset = GalleryImage.objects.all().order_by('order', '-created_at')
+    serializer_class = GalleryImageSerializer
+    permission_classes = [IsAdminUser]
+
+
+class PartnerViewSet(viewsets.ModelViewSet):
+    queryset = Partner.objects.all().order_by('order', '-created_at')
+    serializer_class = PartnerSerializer
+    permission_classes = [IsAdminUser]
+
+
+class SponsorViewSet(viewsets.ModelViewSet):
+    queryset = Sponsor.objects.all().order_by('order', '-created_at')
+    serializer_class = SponsorSerializer
+    permission_classes = [IsAdminUser]
+
+
+class ExecutiveLeaderViewSet(viewsets.ModelViewSet):
+    queryset = ExecutiveLeader.objects.all().order_by('order', 'name')
+    serializer_class = ExecutiveLeaderSerializer
+    permission_classes = [IsAdminUser]
+
+
+class StateChapterViewSet(viewsets.ModelViewSet):
+    queryset = StateChapter.objects.all().order_by('order', 'state')
+    serializer_class = StateChapterSerializer
+    permission_classes = [IsAdminUser]
+
+
+class PublicEventsView(generics.ListAPIView):
+    queryset = Event.objects.filter(is_past=False).order_by('event_date')
     serializer_class = EventSerializer
     permission_classes = [permissions.AllowAny]
 
@@ -1199,6 +1474,11 @@ class PublicConstitutionView(generics.ListAPIView):
     queryset = Constitution.objects.filter(is_current=True).order_by('-created_at')[:1]
     serializer_class = ConstitutionSerializer
     permission_classes = [permissions.AllowAny]
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
 
 class PublicDocumentsView(generics.ListAPIView):
@@ -1218,112 +1498,20 @@ class PublicDocumentCategoriesView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
 
 
-class AdminEventViewSet(viewsets.ModelViewSet):
-    queryset = Event.objects.all().order_by('-event_date')
-    serializer_class = EventSerializer
-    permission_classes = [IsAdminUser]
+class PublicStateChaptersView(generics.ListAPIView):
+    queryset = StateChapter.objects.filter(is_active=True).order_by('order', 'state')
+    serializer_class = StateChapterSerializer
+    permission_classes = [permissions.AllowAny]
 
 
-class AdminEventResponseViewSet(viewsets.ModelViewSet):
-    queryset = EventResponse.objects.all().order_by('-created_at')
-    serializer_class = EventResponseSerializer
-    permission_classes = [IsAdminUser]
-
-    def get_queryset(self):
-        event_id = self.request.query_params.get('event_id')
-        user_id = self.request.query_params.get('user_id')
-        qs = self.queryset
-        if event_id:
-            qs = qs.filter(event_id=event_id)
-        if user_id:
-            qs = qs.filter(user_id=user_id)
-        return qs
-
-
-class PublicEventResponseListView(generics.ListAPIView):
-    serializer_class = PublicEventResponseSerializer
+class StateChapterMembersView(generics.ListAPIView):
+    queryset = User.objects.filter(is_active=True)
+    serializer_class = PublicUserSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        event_id = self.request.query_params.get('event_id')
-        if event_id:
-            return EventResponse.objects.filter(event_id=event_id).order_by('-created_at')
-        return EventResponse.objects.none()
-
-
-class UserEventResponseCreateView(generics.CreateAPIView):
-    serializer_class = EventResponseSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def perform_create(self, serializer):
-        event_id = self.request.data.get('event')
-        response_type = self.request.data.get('response_type')
-        message = self.request.data.get('message', '')
-        event = get_object_or_404(Event, id=event_id)
-        existing = EventResponse.objects.filter(event=event, user=self.request.user).first()
-        if existing:
-            existing.response_type = response_type
-            existing.message = message
-            existing.save()
-            serializer.instance = existing
-        else:
-            serializer.save(user=self.request.user, event=event)
-
-
-class MyEventResponsesView(generics.ListAPIView):
-    serializer_class = EventResponseSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        return EventResponse.objects.filter(user=self.request.user).order_by('-created_at')
-
-
-class AdminDocumentCategoryViewSet(viewsets.ModelViewSet):
-    queryset = DocumentCategory.objects.all().order_by('name')
-    serializer_class = DocumentCategorySerializer
-    permission_classes = [IsAdminUser]
-
-
-class AdminDocumentViewSet(viewsets.ModelViewSet):
-    queryset = Document.objects.all().order_by('-created_at')
-    serializer_class = DocumentSerializer
-    permission_classes = [IsAdminUser]
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        context['request'] = self.request
-        return context
-
-
-class AdminConstitutionViewSet(viewsets.ModelViewSet):
-    queryset = Constitution.objects.all().order_by('-created_at')
-    serializer_class = ConstitutionSerializer
-    permission_classes = [IsAdminUser]
-
-
-class PublicStateChaptersView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request):
-        states = User.objects.values_list('state_of_origin', flat=True).distinct().exclude(state_of_origin='').exclude(state_of_origin__isnull=True)
-        chapters = []
-        for state in states:
-            count = User.objects.filter(state_of_origin=state).count()
-            chapters.append({
-                'state': state,
-                'members': count,
-            })
-        chapters.sort(key=lambda x: x['state'])
-        return Response(chapters)
-
-
-class StateChapterMembersView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, state):
-        members = User.objects.filter(state_of_origin=state)
-        data = UserProfileSerializer(members, many=True).data
-        return Response(data)
+        state = self.kwargs.get('state')
+        return super().get_queryset().filter(state_of_residence__iexact=state)
 
 
 class JoinChapterView(APIView):
@@ -1332,24 +1520,312 @@ class JoinChapterView(APIView):
     def post(self, request):
         state = request.data.get('state')
         if not state:
-            return Response({'detail': 'State is required'}, status=status.HTTP_400_BAD_REQUEST)
-        request.user.state_of_origin = state
-        request.user.save()
-        return Response({'status': 'success', 'message': f'Joined {state} chapter', 'state': state})
+            return Response({'detail': 'State is required'}, status=400)
+        chapter = get_object_or_404(StateChapter, state__iexact=state)
+        user = request.user
+        user.state_of_residence = chapter.state
+        user.save()
+        return Response({'detail': f'Joined {chapter.state} chapter successfully'})
 
 
-class AdminAnnouncementViewSet(viewsets.ModelViewSet):
-    queryset = Announcement.objects.all().order_by('-created_at')
-    serializer_class = AnnouncementSerializer
+class PublicEventResponseListView(generics.ListAPIView):
+    queryset = EventResponse.objects.all().order_by('-created_at')
+    serializer_class = PublicEventResponseSerializer
+    permission_classes = [permissions.AllowAny]
+
+
+class UserEventResponseCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        event_id = request.data.get('event')
+        response_type = request.data.get('response_type')
+        message = request.data.get('message', '')
+        if not event_id or not response_type:
+            return Response({'detail': 'Event and response_type are required'}, status=400)
+        event = get_object_or_404(Event, id=event_id)
+        obj, created = EventResponse.objects.get_or_create(
+            event=event,
+            user=request.user,
+            defaults={'response_type': response_type, 'message': message},
+        )
+        if not created:
+            obj.response_type = response_type
+            obj.message = message
+            obj.save()
+        return Response({'detail': 'Response recorded', 'data': PublicEventResponseSerializer(obj).data})
+
+
+class MyEventResponsesView(generics.ListAPIView):
+    serializer_class = PublicEventResponseSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return EventResponse.objects.filter(user=self.request.user).order_by('-created_at')
+
+
+class AdminEventResponseViewSet(viewsets.ModelViewSet):
+    queryset = EventResponse.objects.all().order_by('-created_at')
+    serializer_class = PublicEventResponseSerializer
     permission_classes = [IsAdminUser]
+    pagination_class = StandardPagination
 
-    def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
+    def get_queryset(self):
+        qs = super().get_queryset()
+        event_id = self.request.query_params.get('event_id')
+        if event_id:
+            qs = qs.filter(event_id=event_id)
+        return qs
+
+
+class EmailVerificationView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get('token')
+        email = request.query_params.get('email')
+        if not token or not email:
+            return Response({'detail': 'Token and email are required'}, status=400)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({'detail': 'Invalid request'}, status=400)
+        if user.email_verified:
+            return Response({'detail': 'Email already verified'})
+        try:
+            UntypedToken(token)
+        except (InvalidToken, TokenError):
+            return Response({'detail': 'Invalid or expired token'}, status=400)
+        user.email_verified = True
+        user.save()
+        return Response({'detail': 'Email verified successfully'})
+
+
+class ResendVerificationEmailView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email')
+        if not email:
+            return Response({'detail': 'Email is required'}, status=400)
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({'detail': 'No account found with this email.'}, status=404)
+        if user.email_verified:
+            return Response({'detail': 'Email is already verified. You can log in directly.'})
+        try:
+            token = RefreshToken.for_user(user)
+            verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
+            send_mail(
+                'UKGIN - Verify Your Email',
+                f'Click the link to verify your email: {verification_url}',
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=True,
+            )
+        except Exception:
+            pass
+        return Response({'detail': 'Verification email sent. Please check your inbox and spam/junk folder.'})
 
 
 class PublicAnnouncementListView(generics.ListAPIView):
+    queryset = Announcement.objects.filter(is_active=True).order_by('-created_at')
     serializer_class = PublicAnnouncementSerializer
     permission_classes = [permissions.AllowAny]
 
+
+class MyNotificationsListView(generics.ListAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
-        return Announcement.objects.filter(is_active=True).order_by('-created_at')[:10]
+        return Notification.objects.filter(user=self.request.user).order_by('-created_at')
+
+
+class UnreadNotificationCountView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        count = Notification.objects.filter(user=request.user, is_read=False).count()
+        return Response({'unread_count': count})
+
+
+class MarkNotificationReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk=None):
+        notification = get_object_or_404(Notification, pk=pk, user=request.user)
+        notification.is_read = True
+        notification.save()
+        return Response({'detail': 'Notification marked as read'})
+
+
+class MarkAllNotificationsReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        count = Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({'detail': f'{count} notifications marked as read'})
+
+
+class VolunteerApplicationCreateView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = VolunteerApplicationSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({'detail': 'Application submitted successfully', 'data': serializer.data}, status=201)
+        return Response({'status': 'error', 'errors': serializer.errors}, status=400)
+
+
+class ContactMessageCreateView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ContactMessageSerializer(data=request.data)
+        if serializer.is_valid():
+            contact = serializer.save()
+            try:
+                send_mail(
+                    'UKGIN - We Received Your Message',
+                    f'Dear {contact.name},\n\nThank you for contacting UKGIN. We have received your message and our team will get back to you within 24-48 hours.\n\nSubject: {contact.subject}\nMessage: {contact.message}',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [contact.email],
+                    fail_silently=True,
+                )
+            except Exception:
+                pass
+            return Response({'detail': 'Message sent successfully', 'data': serializer.data}, status=201)
+        return Response({'status': 'error', 'errors': serializer.errors}, status=400)
+
+
+class PublicCategoryListView(generics.ListAPIView):
+    queryset = Category.objects.all().order_by('name')
+    serializer_class = CategorySerializer
+    permission_classes = [permissions.AllowAny]
+
+
+class PublicPostListView(generics.ListAPIView):
+    queryset = Post.objects.filter(is_published=True).order_by('-published_date')
+    serializer_class = PostSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+
+class PublicPostDetailView(generics.RetrieveAPIView):
+    queryset = Post.objects.filter(is_published=True)
+    serializer_class = PostSerializer
+    permission_classes = [permissions.AllowAny]
+    lookup_field = 'slug'
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+
+class PublicProjectListView(generics.ListAPIView):
+    queryset = Project.objects.filter(is_active=True).order_by('-created_at')
+    serializer_class = ProjectSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+
+class PublicProjectDetailView(generics.RetrieveAPIView):
+    queryset = Project.objects.filter(is_active=True)
+    serializer_class = ProjectSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+
+class PublicSocialMediaLinksView(generics.ListAPIView):
+    queryset = SocialMediaLink.objects.filter(is_active=True).order_by('order')
+    serializer_class = SocialMediaLinkSerializer
+    permission_classes = [permissions.AllowAny]
+
+
+class PublicGalleryImageListView(generics.ListAPIView):
+    queryset = GalleryImage.objects.filter(is_active=True).order_by('order')
+    serializer_class = GalleryImageSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+
+class PublicExecutiveLeadersView(generics.ListAPIView):
+    queryset = ExecutiveLeader.objects.filter(is_active=True).order_by('order')
+    serializer_class = ExecutiveLeaderSerializer
+    permission_classes = [permissions.AllowAny]
+
+
+class PublicPageContentView(generics.RetrieveAPIView):
+    queryset = PageContent.objects.filter(is_published=True)
+    serializer_class = PageContentSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_object(self):
+        slug = self.kwargs.get('slug')
+        return get_object_or_404(PageContent, slug=slug)
+
+
+class ExportReportView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        report_type = request.query_params.get('type', 'daily')
+        export_format = request.query_params.get('format', 'json')
+        now = timezone.now()
+
+        if report_type == 'daily':
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif report_type == 'weekly':
+            start = now - timedelta(days=7)
+        elif report_type == 'monthly':
+            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        elif report_type == 'yearly':
+            start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            start = now - timedelta(days=30)
+
+        end_date = now
+
+        data = {
+            'report_type': report_type,
+            'period': {'start': str(start), 'end': str(end_date)},
+            'total_users': User.objects.filter(date_joined__gte=start, date_joined__lte=end_date).count(),
+            'total_deposits': Deposit.objects.filter(created_at__gte=start, created_at__lte=end_date, status='approved').count(),
+            'total_withdrawals': Withdrawal.objects.filter(created_at__gte=start, created_at__lte=end_date).count(),
+            'total_donations': Donation.objects.filter(created_at__gte=start, created_at__lte=end_date, is_approved=True).count(),
+            'total_revenue': float(Donation.objects.filter(created_at__gte=start, created_at__lte=end_date, is_approved=True).aggregate(total=Sum('amount'))['total'] or 0),
+            'total_profit': float(Donation.objects.filter(created_at__gte=start, created_at__lte=end_date, is_approved=True).aggregate(total=Sum('amount'))['total'] or 0) - float(Withdrawal.objects.filter(created_at__gte=start, created_at__lte=end_date, status='approved').aggregate(total=Sum('amount'))['total'] or 0),
+        }
+
+        if export_format == 'csv':
+            import csv
+            from django.http import HttpResponse
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = f'attachment; filename="{report_type}_report.csv"'
+            writer = csv.writer(response)
+            writer.writerow(['Metric', 'Value'])
+            for key, value in data.items():
+                writer.writerow([key, value])
+            return response
+
+        return Response(data)

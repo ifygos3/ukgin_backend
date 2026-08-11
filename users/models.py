@@ -837,6 +837,8 @@ class PageContent(models.Model):
     slug = models.SlugField(max_length=100, unique=True)
     page_type = models.CharField(max_length=50, choices=PAGE_TYPES, unique=True, blank=True, null=True)
     title = models.CharField(max_length=200)
+    meta_title = models.CharField(max_length=200, blank=True, default='')
+    meta_description = models.CharField(max_length=500, blank=True, default='')
     content = models.TextField()
     is_published = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

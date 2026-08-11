@@ -199,6 +199,8 @@ class UserViewSet(viewsets.ModelViewSet):
         user = serializer.save()
         Wallet.objects.get_or_create(user=user)
         Referral.objects.filter(referred_user=user).update(status='completed')
+        email_sent = False
+        email_error = None
         try:
             token = RefreshToken.for_user(user)
             verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
@@ -207,10 +209,12 @@ class UserViewSet(viewsets.ModelViewSet):
                 f'Click the link to verify your email: {verification_url}',
                 settings.DEFAULT_FROM_EMAIL,
                 [user.email],
-                fail_silently=True,
+                fail_silently=False,
             )
-        except Exception:
-            pass
+            email_sent = True
+        except Exception as e:
+            email_error = str(e)
+            print(f"[EmailVerification] Failed to send verification email to {user.email}: {e}")
         AuditLog.objects.create(
             admin_user=request.user if request.user.is_authenticated else None,
             action='user_create',
@@ -219,7 +223,14 @@ class UserViewSet(viewsets.ModelViewSet):
             ip_address=request.META.get('REMOTE_ADDR', ''),
         )
         headers = self.get_success_headers(serializer.data)
-        return Response({'user': UserSerializer(user).data}, status=status.HTTP_201_CREATED, headers=headers)
+        response_data = {'user': UserSerializer(user).data}
+        if email_sent:
+            response_data['email_verification_sent'] = True
+            response_data['email_verification_message'] = 'Verification email sent successfully.'
+        else:
+            response_data['email_verification_sent'] = False
+            response_data['email_verification_message'] = f'Failed to send verification email: {email_error or "Unknown error"}'
+        return Response(response_data, status=status.HTTP_201_CREATED, headers=headers)
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
@@ -228,6 +239,16 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
+        signature_data = request.data.get('signature_data')
+        if signature_data and ';base64,' in str(signature_data):
+            import base64
+            from django.core.files.base import ContentFile
+            try:
+                format_part, imgstr = str(signature_data).split(';base64,')
+                ext = format_part.split('/')[-1]
+                user.signature.save(f'signature_{user.id}.{ext}', ContentFile(base64.b64decode(imgstr)), save=True)
+            except Exception:
+                pass
         AuditLog.objects.create(
             admin_user=request.user,
             action='user_update',
@@ -595,6 +616,48 @@ class DonationViewSet(viewsets.ModelViewSet):
             ip_address=request.META.get('REMOTE_ADDR', ''),
         )
         return Response({'status': 'success', 'message': 'Donation approved'})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminOrFinance])
+    def reject(self, request, pk=None):
+        donation = self.get_object()
+        donation.is_approved = False
+        donation.approved_by = request.user
+        donation.save()
+        AuditLog.objects.create(
+            admin_user=request.user,
+            action='donation_reject',
+            target_user=donation.user,
+            details=f'Donation of {donation.amount} rejected for {donation.user.username}',
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+        )
+        return Response({'status': 'success', 'message': 'Donation rejected'})
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAdminOrFinance])
+    def send_thank_you(self, request, pk=None):
+        donation = self.get_object()
+        user = donation.user
+        message = request.data.get('message', '')
+        if not user.email:
+            return Response({'detail': 'Donor email not found.'}, status=400)
+        try:
+            from django.core.mail import send_mail
+            send_mail(
+                'UKGIN - Thank You for Your Donation',
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=False,
+            )
+            AuditLog.objects.create(
+                admin_user=request.user,
+                action='donation_thank_you',
+                target_user=user,
+                details=f'Thank you message sent to {user.username} for donation of {donation.amount}',
+                ip_address=request.META.get('REMOTE_ADDR', ''),
+            )
+            return Response({'status': 'success', 'message': 'Thank you message sent.'})
+        except Exception as e:
+            return Response({'detail': f'Failed to send email: {str(e)}'}, status=500)
 
 
 class DepositViewSet(viewsets.ModelViewSet):
@@ -1606,14 +1669,27 @@ class ResendVerificationEmailView(APIView):
 
     def post(self, request):
         email = request.data.get('email')
-        if not email:
-            return Response({'detail': 'Email is required'}, status=400)
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({'detail': 'No account found with this email.'}, status=404)
+        identifier = request.data.get('identifier')
+        if not email and not identifier:
+            return Response({'detail': 'Email or identifier is required'}, status=400)
+        user = None
+        if email:
+            try:
+                user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                return Response({'detail': 'No account found with this email.'}, status=404)
+        elif identifier:
+            user = User.objects.filter(username=identifier).first()
+            if not user:
+                user = User.objects.filter(email=identifier).first()
+            if not user:
+                user = User.objects.filter(phone_number=identifier).first()
+            if not user:
+                return Response({'detail': 'No account found with this identifier.'}, status=404)
         if user.email_verified:
             return Response({'detail': 'Email is already verified. You can log in directly.'})
+        email_sent = False
+        email_error = None
         try:
             token = RefreshToken.for_user(user)
             verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
@@ -1622,11 +1698,15 @@ class ResendVerificationEmailView(APIView):
                 f'Click the link to verify your email: {verification_url}',
                 settings.DEFAULT_FROM_EMAIL,
                 [user.email],
-                fail_silently=True,
+                fail_silently=False,
             )
-        except Exception:
-            pass
-        return Response({'detail': 'Verification email sent. Please check your inbox and spam/junk folder.'})
+            email_sent = True
+        except Exception as e:
+            email_error = str(e)
+            print(f"[EmailVerification] Failed to resend verification email to {user.email}: {e}")
+        if email_sent:
+            return Response({'detail': 'Verification email sent successfully. Please check your inbox and spam/junk folder.'})
+        return Response({'detail': f'Failed to send verification email: {email_error or "Unknown error"}'}, status=500)
 
 
 class PublicAnnouncementListView(generics.ListAPIView):

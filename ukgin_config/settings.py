@@ -13,84 +13,11 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 
-from cloudinary_storage.storage import MediaCloudinaryStorage
 from django.core.files.uploadedfile import UploadedFile
 
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024
-
-class AutoDetectCloudinaryStorage(MediaCloudinaryStorage):
-    VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.ogg', '.ogv', '.flv', '.wmv'}
-    RAW_EXTENSIONS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv', '.zip', '.rar', '.7z'}
-    _detected_videos = {}
-    _detected_raws = {}
-
-    def _get_resource_type(self, name):
-        if name in self._detected_videos:
-            return self._detected_videos[name]
-        if name in self._detected_raws:
-            return self._detected_raws[name]
-        extension = os.path.splitext(name)[1].lower()
-        if extension in self.VIDEO_EXTENSIONS:
-            self._detected_videos[name] = 'video'
-            return 'video'
-        if extension in self.RAW_EXTENSIONS:
-            self._detected_raws[name] = 'raw'
-            return 'raw'
-        return super()._get_resource_type(name)
-
-    def _save(self, name, content):
-        mime_type = getattr(content, 'content_type', '') or ''
-        original_name = getattr(content, 'name', '') or ''
-        name = self._normalise_name(name)
-        name = self._prepend_prefix(name)
-        wrapped = UploadedFile(content, name)
-        wrapped.content_type = mime_type
-        wrapped._original_name = original_name
-        response = self._upload(name, wrapped)
-        result_type = response.get('resource_type', 'image')
-        self._detected_videos[name] = result_type
-        public_id = response.get('public_id')
-        if public_id and public_id != name:
-            self._detected_videos[public_id] = result_type
-        return public_id
-
-    def _upload(self, name, content):
-        resource_type = self._get_resource_type(name)
-        try:
-            mime_type = getattr(content, 'content_type', '') or ''
-            original_name = getattr(content, '_original_name', '') or getattr(content, 'name', '') or ''
-            if mime_type.startswith('video/'):
-                resource_type = 'video'
-            elif mime_type in (
-                'application/pdf',
-                'application/msword',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'application/vnd.ms-excel',
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                'application/vnd.ms-powerpoint',
-                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-                'text/plain',
-                'text/csv',
-                'application/zip',
-                'application/x-rar-compressed',
-                'application/x-7z-compressed',
-            ) or mime_type.startswith('application/') or mime_type.startswith('text/'):
-                resource_type = 'raw'
-            if resource_type == 'image':
-                original_ext = os.path.splitext(original_name)[1].lower()
-                if original_ext in self.VIDEO_EXTENSIONS:
-                    resource_type = 'video'
-                elif original_ext in self.RAW_EXTENSIONS:
-                    resource_type = 'raw'
-        except Exception:
-            pass
-        options = {'use_filename': True, 'resource_type': resource_type, 'tags': self.TAG}
-        folder = os.path.dirname(name)
-        if folder:
-            options['folder'] = folder
-        return cloudinary.uploader.upload(content, **options)
 
 
 def get_env_value(name, cast=None):
@@ -348,6 +275,20 @@ CLOUDINARY_STORAGE = {
     },
 }
 
+if CLOUDINARY_URL and not (CLOUDINARY_STORAGE['CLOUD_NAME'] and CLOUDINARY_STORAGE['API_KEY'] and CLOUDINARY_STORAGE['API_SECRET']):
+    parsed = None
+    if CLOUDINARY_URL.startswith('cloudinary://'):
+        try:
+            body = CLOUDINARY_URL.split('://', 1)[1]
+            if '@' in body:
+                creds, _, cloud_name = body.rpartition('@')
+                api_key, _, api_secret = creds.partition(':')
+                CLOUDINARY_STORAGE['CLOUD_NAME'] = cloud_name
+                CLOUDINARY_STORAGE['API_KEY'] = api_key
+                CLOUDINARY_STORAGE['API_SECRET'] = api_secret
+        except Exception:
+            pass
+
 USE_CLOUDINARY_STORAGE = bool(
     CLOUDINARY_URL or (
         CLOUDINARY_STORAGE['CLOUD_NAME'] and
@@ -355,6 +296,101 @@ USE_CLOUDINARY_STORAGE = bool(
         CLOUDINARY_STORAGE['API_SECRET']
     )
 )
+
+if USE_CLOUDINARY_STORAGE:
+    missing = [
+        name
+        for name, value in [
+            ('CLOUDINARY_CLOUD_NAME', CLOUDINARY_STORAGE['CLOUD_NAME']),
+            ('CLOUDINARY_API_KEY', CLOUDINARY_STORAGE['API_KEY']),
+            ('CLOUDINARY_API_SECRET', CLOUDINARY_STORAGE['API_SECRET']),
+        ]
+        if not value
+    ]
+    if missing:
+        raise RuntimeError(
+            'Cloudinary storage is enabled, but the following environment variables are missing: '
+            + ', '.join(missing)
+        )
+    cloudinary.config(
+        cloud_name=CLOUDINARY_STORAGE['CLOUD_NAME'],
+        api_key=CLOUDINARY_STORAGE['API_KEY'],
+        api_secret=CLOUDINARY_STORAGE['API_SECRET'],
+    )
+
+from cloudinary_storage.storage import MediaCloudinaryStorage
+
+class AutoDetectCloudinaryStorage(MediaCloudinaryStorage):
+    VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.ogg', '.ogv', '.flv', '.wmv'}
+    RAW_EXTENSIONS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv', '.zip', '.rar', '.7z'}
+    _detected_videos = {}
+    _detected_raws = {}
+
+    def _get_resource_type(self, name):
+        if name in self._detected_videos:
+            return self._detected_videos[name]
+        if name in self._detected_raws:
+            return self._detected_raws[name]
+        extension = os.path.splitext(name)[1].lower()
+        if extension in self.VIDEO_EXTENSIONS:
+            self._detected_videos[name] = 'video'
+            return 'video'
+        if extension in self.RAW_EXTENSIONS:
+            self._detected_raws[name] = 'raw'
+            return 'raw'
+        return super()._get_resource_type(name)
+
+    def _save(self, name, content):
+        mime_type = getattr(content, 'content_type', '') or ''
+        original_name = getattr(content, 'name', '') or ''
+        name = self._normalise_name(name)
+        name = self._prepend_prefix(name)
+        wrapped = UploadedFile(content, name)
+        wrapped.content_type = mime_type
+        wrapped._original_name = original_name
+        response = self._upload(name, wrapped)
+        result_type = response.get('resource_type', 'image')
+        self._detected_videos[name] = result_type
+        public_id = response.get('public_id')
+        if public_id and public_id != name:
+            self._detected_videos[public_id] = result_type
+        return public_id
+
+    def _upload(self, name, content):
+        resource_type = self._get_resource_type(name)
+        try:
+            mime_type = getattr(content, 'content_type', '') or ''
+            original_name = getattr(content, '_original_name', '') or getattr(content, 'name', '') or ''
+            if mime_type.startswith('video/'):
+                resource_type = 'video'
+            elif mime_type in (
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'application/vnd.ms-powerpoint',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'text/plain',
+                'text/csv',
+                'application/zip',
+                'application/x-rar-compressed',
+                'application/x-7z-compressed',
+            ) or mime_type.startswith('application/') or mime_type.startswith('text/'):
+                resource_type = 'raw'
+            if resource_type == 'image':
+                original_ext = os.path.splitext(original_name)[1].lower()
+                if original_ext in self.VIDEO_EXTENSIONS:
+                    resource_type = 'video'
+                elif original_ext in self.RAW_EXTENSIONS:
+                    resource_type = 'raw'
+        except Exception:
+            pass
+        options = {'use_filename': True, 'resource_type': resource_type, 'tags': self.TAG}
+        folder = os.path.dirname(name)
+        if folder:
+            options['folder'] = folder
+        return cloudinary.uploader.upload(content, **options)
 
 STORAGES = {
     'default': {

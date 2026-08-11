@@ -11,15 +11,31 @@ ROLE_CHOICES = [
 ]
 
 class UserSerializer(serializers.ModelSerializer):
+    signature_url = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'password', 'phone_number', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'signature_data', 'address', 'first_name', 'last_name', 'full_name', 'role', 'is_suspended', 'is_banned', 'kyc_status', 'total_donations', 'total_deposits', 'total_withdrawals', 'referred_by', 'referral_code', 'ip_address', 'device_info', 'last_login_ip', 'is_active', 'is_staff', 'email_verified', 'date_joined', 'created_at', 'updated_at']
+        fields = ['id', 'username', 'email', 'password', 'phone_number', 'country', 'state_of_origin', 'state_of_residence', 'lga', 'community', 'place_of_birth', 'sex', 'highest_qualification', 'institution_attended', 'year_of_graduation', 'profession', 'current_job', 'job_title', 'job_experience', 'current_employee', 'about_user', 'signature', 'signature_data', 'signature_url', 'address', 'first_name', 'last_name', 'full_name', 'role', 'is_suspended', 'is_banned', 'kyc_status', 'total_donations', 'total_deposits', 'total_withdrawals', 'referred_by', 'referral_code', 'ip_address', 'device_info', 'last_login_ip', 'is_active', 'is_staff', 'email_verified', 'date_joined', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at', 'date_joined']
         extra_kwargs = {
             'password': {'write_only': True},
             'email': {'required': True},
             'username': {'required': False},
         }
+
+    def get_signature_url(self, obj):
+        if obj.signature:
+            raw_url = obj.signature.url
+            if raw_url.startswith(('http://', 'https://')):
+                return raw_url
+            request = self.context.get('request')
+            if request:
+                try:
+                    return request.build_absolute_uri(raw_url)
+                except Exception:
+                    return raw_url
+            return raw_url
+        return None
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -149,7 +165,7 @@ class DonationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Donation
-        fields = ['id', 'user', 'amount', 'payment_method', 'bank_name', 'account_number', 'crypto_type', 'wallet_address', 'card_type', 'card_last_four', 'card_holder', 'card_expiry', 'transaction_reference', 'proof_of_donation', 'proof_of_donation_url', 'notes', 'is_approved', 'approved_by', 'created_at', 'updated_at']
+        fields = ['id', 'user', 'amount', 'payment_method', 'bank_name', 'account_number', 'crypto_type', 'wallet_address', 'proof_of_donation', 'proof_of_donation_url', 'notes', 'is_approved', 'approved_by', 'created_at', 'updated_at']
 
     def get_proof_of_donation_url(self, obj):
         if not obj.proof_of_donation:
@@ -159,7 +175,10 @@ class DonationSerializer(serializers.ModelSerializer):
             return file_url
         request = self.context.get('request')
         if request:
-            return request.build_absolute_uri(file_url)
+            try:
+                return request.build_absolute_uri(file_url)
+            except Exception:
+                return file_url
         return file_url
 
 
@@ -169,7 +188,7 @@ class DepositSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Deposit
-        fields = ['id', 'user', 'amount', 'payment_method', 'bank_name', 'account_number', 'crypto_type', 'wallet_address', 'card_type', 'card_last_four', 'card_holder', 'card_expiry', 'transaction_reference', 'proof_of_payment', 'proof_of_payment_url', 'status', 'notes', 'approved_by', 'created_at', 'updated_at']
+        fields = ['id', 'user', 'amount', 'payment_method', 'bank_name', 'account_number', 'crypto_type', 'wallet_address', 'proof_of_payment', 'proof_of_payment_url', 'status', 'notes', 'approved_by', 'created_at', 'updated_at']
 
     def get_proof_of_payment_url(self, obj):
         if not obj.proof_of_payment:
@@ -179,7 +198,10 @@ class DepositSerializer(serializers.ModelSerializer):
             return file_url
         request = self.context.get('request')
         if request:
-            return request.build_absolute_uri(file_url)
+            try:
+                return request.build_absolute_uri(file_url)
+            except Exception:
+                return file_url
         return file_url
 
 
@@ -494,7 +516,7 @@ class ContactMessageAdminSerializer(serializers.ModelSerializer):
 class PageContentSerializer(serializers.ModelSerializer):
     class Meta:
         model = PageContent
-        fields = ['id', 'slug', 'page_type', 'title', 'content', 'is_published', 'created_at', 'updated_at']
+        fields = ['id', 'slug', 'page_type', 'title', 'meta_title', 'meta_description', 'content', 'is_published', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
@@ -589,7 +611,7 @@ class ExecutiveLeaderSerializer(serializers.ModelSerializer):
 class GalleryImageSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
     media_url = serializers.SerializerMethodField()
-    caption = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    caption = serializers.CharField(write_only=True, required=False, allow_blank=True, source='description')
     url = serializers.SerializerMethodField()
 
     class Meta:

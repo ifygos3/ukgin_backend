@@ -1,5 +1,10 @@
 from rest_framework import serializers
+import os
+import tempfile
+from django.conf import settings
+from django.urls import reverse
 from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution, Announcement, VolunteerApplication, NewsletterSubscription, Newsletter, ContactMessage, PageContent, Category, Post, Project, SocialMediaLink, ExecutiveLeader, GalleryImage, StateChapter, Partner, Sponsor
+from .youtube_utils import upload_video_to_youtube
 
 
 ROLE_CHOICES = [
@@ -374,13 +379,12 @@ class ConstitutionSerializer(serializers.ModelSerializer):
     def get_file_url(self, obj):
         if not obj.file:
             return None
-        file_url = obj.file.url
-        if file_url.startswith(('http://', 'https://')):
-            return file_url
         request = self.context.get('request')
+        # Always hand out the streaming endpoint: it works for local and Cloudinary
+        # storage and sends the CORS headers the frontend needs to download it.
         if request:
-            return request.build_absolute_uri(file_url)
-        return file_url
+            return request.build_absolute_uri(reverse('public-constitution-file'))
+        return reverse('public-constitution-file')
 
 
 class AnnouncementSerializer(serializers.ModelSerializer):
@@ -613,10 +617,11 @@ class GalleryImageSerializer(serializers.ModelSerializer):
     media_url = serializers.SerializerMethodField()
     caption = serializers.CharField(write_only=True, required=False, allow_blank=True, source='description')
     url = serializers.SerializerMethodField()
+    youtube_url = serializers.URLField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = GalleryImage
-        fields = ['id', 'title', 'description', 'caption', 'image', 'image_url', 'url', 'media_url', 'media_type', 'is_active', 'order', 'created_at', 'updated_at']
+        fields = ['id', 'title', 'description', 'caption', 'image', 'image_url', 'url', 'media_url', 'media_type', 'youtube_url', 'is_active', 'order', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at', 'media_type']
 
     def get_image_url(self, obj):
@@ -637,6 +642,8 @@ class GalleryImageSerializer(serializers.ModelSerializer):
         return self.get_image_url(obj)
 
     def get_media_url(self, obj):
+        if obj.youtube_url:
+            return obj.youtube_url
         request = self.context.get('request')
         if not obj.image:
             return None
@@ -656,17 +663,68 @@ class GalleryImageSerializer(serializers.ModelSerializer):
                 return raw_url
         return raw_url
 
+    def _is_video_file(self, uploaded_file):
+        if not uploaded_file:
+            return False
+        content_type = getattr(uploaded_file, 'content_type', '') or ''
+        if content_type.startswith('video/'):
+            return True
+        name = getattr(uploaded_file, 'name', '') or ''
+        ext = os.path.splitext(name)[1].lower()
+        video_extensions = getattr(GalleryImage, 'VIDEO_EXTENSIONS', [])
+        if ext in video_extensions:
+            return True
+        return False
+
+    def _upload_video_to_youtube(self, uploaded_file, title, description):
+        suffix = os.path.splitext(getattr(uploaded_file, 'name', 'video.mp4'))[1] or '.mp4'
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            for chunk in uploaded_file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+        try:
+            return upload_video_to_youtube(title=title, description=description, file_path=tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
     def create(self, validated_data):
         caption = validated_data.pop('caption', None)
         if caption and not validated_data.get('description'):
             validated_data['description'] = caption
         validated_data.setdefault('is_active', True)
+
+        image_file = validated_data.get('image')
+        if image_file and self._is_video_file(image_file):
+            youtube_url = validated_data.pop('youtube_url', None) or ''
+            if not youtube_url:
+                title = validated_data.get('title') or 'UKGIN Gallery Video'
+                description = validated_data.get('description') or ''
+                youtube_url, _ = self._upload_video_to_youtube(image_file, title, description)
+            validated_data['youtube_url'] = youtube_url
+            validated_data['media_type'] = 'video'
+            validated_data.pop('image', None)
+
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
         caption = validated_data.pop('caption', None)
         if caption is not None and not validated_data.get('description'):
             validated_data['description'] = caption
+
+        image_file = validated_data.get('image')
+        if image_file and self._is_video_file(image_file):
+            youtube_url = validated_data.pop('youtube_url', None) or ''
+            if not youtube_url:
+                title = validated_data.get('title') or instance.title or 'UKGIN Gallery Video'
+                description = validated_data.get('description') or instance.description or ''
+                youtube_url, _ = self._upload_video_to_youtube(image_file, title, description)
+            validated_data['youtube_url'] = youtube_url
+            validated_data['media_type'] = 'video'
+            validated_data.pop('image', None)
+
         return super().update(instance, validated_data)
 
 

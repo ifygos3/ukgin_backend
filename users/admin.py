@@ -6,7 +6,6 @@ from django.utils.translation import gettext_lazy as _
 from django.urls import path, reverse
 from django.shortcuts import redirect
 from django.core.exceptions import PermissionDenied
-from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -188,15 +187,10 @@ class UserAdmin(BaseUserAdmin):
         super().save_model(request, obj, form, change)
         if is_new and obj.email and not obj.email_verified:
             try:
-                token = RefreshToken.for_user(obj)
-                verification_url = f"{settings.SITE_URL if hasattr(settings, 'SITE_URL') else 'http://localhost:5173'}/verify-email?token={str(token.access_token)}&email={obj.email}"
-                send_mail(
-                    'UKGIN - Verify Your Email',
-                    f'Click the link to verify your email: {verification_url}',
-                    settings.DEFAULT_FROM_EMAIL,
-                    [obj.email],
-                    fail_silently=True,
-                )
+                from .views import send_verification_email, build_email_verification_token
+                token = build_email_verification_token(obj)
+                verification_url = f"{settings.SITE_URL if hasattr(settings, 'SITE_URL') else 'http://localhost:5173'}/verify-email?token={str(token)}&email={obj.email}"
+                send_verification_email(obj, verification_url)
             except Exception:
                 pass
 

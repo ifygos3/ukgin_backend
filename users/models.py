@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.conf import settings
+from .storage import DatabaseFileStorage
 
 PAYMENT_METHODS = [
     ('bank_transfer', 'Bank Transfer'),
@@ -729,11 +730,29 @@ class Document(models.Model):
         return self.title
 
 
+class DocumentBlob(models.Model):
+    """File bytes kept in Postgres so uploads survive container redeploys."""
+
+    name = models.CharField(max_length=500, unique=True)
+    data = models.BinaryField()
+    content_type = models.CharField(max_length=150, default='application/octet-stream')
+    size = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = 'Document blobs'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} ({self.size} bytes)"
+
+
 class Constitution(models.Model):
     version = models.CharField(max_length=20)
     title = models.CharField(max_length=200)
     content = models.TextField()
-    file = models.FileField(upload_to='constitutions/', blank=True, null=True)
+    file = models.FileField(upload_to='constitutions/', storage=DatabaseFileStorage(), blank=True, null=True)
     is_current = models.BooleanField(default=False)
     effective_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -744,6 +763,29 @@ class Constitution(models.Model):
 
     def __str__(self):
         return f"{self.title} - {self.version}"
+
+    def save(self, *args, **kwargs):
+        # Only one constitution can be the public one, whichever panel saved it.
+        if self.is_current:
+            Constitution.objects.exclude(pk=self.pk).filter(is_current=True).update(is_current=False)
+        previous_file = None
+        if self.pk:
+            previous_file = (
+                Constitution.objects.filter(pk=self.pk)
+                .values_list('file', flat=True)
+                .first()
+            )
+        super().save(*args, **kwargs)
+        # Replacing a PDF leaves the old bytes behind in the blob table; drop them.
+        if previous_file and previous_file != self.file.name:
+            DocumentBlob.objects.filter(name=previous_file.replace('\\', '/')).delete()
+
+    def delete(self, *args, **kwargs):
+        stored_name = self.file.name if self.file else None
+        result = super().delete(*args, **kwargs)
+        if stored_name:
+            DocumentBlob.objects.filter(name=stored_name.replace('\\', '/')).delete()
+        return result
 
 
 class VolunteerApplication(models.Model):
@@ -1003,6 +1045,7 @@ class GalleryImage(models.Model):
     description = models.TextField(blank=True)
     image = models.FileField(upload_to='gallery_media/', blank=True, null=True)
     media_type = models.CharField(max_length=10, choices=MEDIA_TYPE_CHOICES, default='image')
+    youtube_url = models.URLField(max_length=300, blank=True, null=True, help_text='YouTube video URL for video gallery items.')
     is_active = models.BooleanField(default=True)
     order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1019,6 +1062,8 @@ class GalleryImage(models.Model):
     def is_video(self):
         if self.media_type == 'video':
             return True
+        if self.youtube_url:
+            return True
         if not self.image or not self.image.name:
             return False
         try:
@@ -1033,7 +1078,7 @@ class GalleryImage(models.Model):
         return False
 
     def save(self, *args, **kwargs):
-        if self.image:
+        if self.image and not self.youtube_url:
             detected = 'video' if self.is_video() else 'image'
             if self.media_type != detected:
                 self.media_type = detected

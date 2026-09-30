@@ -52,6 +52,7 @@ urlpatterns = [
     path('email-verify/resend/', views.ResendVerificationEmailView.as_view(), name='resend-verification-email'),
     path('public/events/', views.PublicEventsView.as_view(), name='public-events'),
     path('public/constitution/', views.PublicConstitutionView.as_view(), name='public-constitution'),
+    path('public/constitution/file/', views.PublicConstitutionFileView.as_view(), name='public-constitution-file'),
     path('public/documents/', views.PublicDocumentsView.as_view(), name='public-documents'),
     path('public/document-categories/', views.PublicDocumentCategoriesView.as_view(), name='public-document-categories'),
     path('public/state-chapters/', views.PublicStateChaptersView.as_view(), name='public-state-chapters'),

@@ -18,21 +18,73 @@ from .serializers import (
     AnnouncementSerializer, PublicAnnouncementSerializer,
     VolunteerApplicationSerializer, VolunteerApplicationAdminSerializer, NewsletterSubscriptionSerializer, NewsletterSerializer, ContactMessageSerializer, ContactMessageAdminSerializer, PageContentSerializer, CategorySerializer, PostSerializer, ProjectSerializer, SocialMediaLinkSerializer, ExecutiveLeaderSerializer, GalleryImageSerializer, StateChapterSerializer, PartnerSerializer, SponsorSerializer,
 )
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from rest_framework_simplejwt.tokens import UntypedToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
-from django.core.mail import send_mail, EmailMessage
+from django.http import FileResponse, HttpResponse
+from django.core.mail import send_mail, EmailMessage, EmailMultiAlternatives
+try:
+    from django.core.mail.message import sanitize_address
+except ImportError:  # Django < 6.0
+    from django.core.mail.utils import sanitize_address
 from django.template.loader import render_to_string
 from django.conf import settings
+import requests
 import json
 import time
 import uuid
 
 
 User = get_user_model()
+
+EMAIL_VERIFICATION_TOKEN_LIFETIME = timedelta(hours=24)
+
+
+def build_email_verification_token(user):
+    """Verification links get their own long-lived token.
+
+    The default access token only lives 5 minutes, which expires long before
+    most people open the email, so reusing it here made every link dead.
+    """
+    token = AccessToken.for_user(user)
+    token.set_exp(lifetime=EMAIL_VERIFICATION_TOKEN_LIFETIME)
+    token['token_type'] = 'email_verification'
+    return token
+
+
+def default_from_email():
+    """`UKGIN <addr>` so the From line shows a real brand name."""
+    return f'UKGIN <{bare_from_email()}>'
+
+
+def bare_from_email():
+    try:
+        return sanitize_address(settings.DEFAULT_FROM_EMAIL, 'utf-8')
+    except TypeError:
+        return sanitize_address(settings.DEFAULT_FROM_EMAIL)
+
+
+def send_verification_email(user, verify_url):
+    html_message = render_to_string('users/email_verification.html', {'verify_url': verify_url, 'user': user})
+    text_message = render_to_string('users/email_verification.txt', {'verify_url': verify_url, 'user': user})
+    # Must be multipart/alternative: a single-part text/html mail scores as spam.
+    email = EmailMultiAlternatives(
+        'Verify your UKGIN email address',
+        text_message,
+        default_from_email(),
+        [user.email],
+        headers={
+            'Reply-To': bare_from_email(),
+            'Auto-Submitted': 'auto-generated',
+            'Precedence': 'bulk',
+            'X-Entity-Ref-ID': uuid.uuid4().hex,
+        },
+    )
+    email.attach_alternative(html_message, 'text/html')
+    email.send(fail_silently=False)
 
 
 class StandardPagination(PageNumberPagination):
@@ -69,6 +121,35 @@ ROLE_CHOICES = [
     ('admin', 'Admin'),
     ('super_admin', 'Super Admin'),
 ]
+
+
+def send_verification_email_via_sendgrid(to_email, subject, verification_url):
+    sendgrid_api_key = getattr(settings, 'SENDGRID_API_KEY', '')
+    if not sendgrid_api_key:
+        return False, 'SendGrid API key not configured'
+    try:
+        url = 'https://api.sendgrid.com/v3/mail/send'
+        headers = {
+            'Authorization': f'Bearer {sendgrid_api_key}',
+            'Content-Type': 'application/json',
+        }
+        data = {
+            'personalizations': [{
+                'to': [{'email': to_email}],
+                'subject': subject,
+            }],
+            'from': {'email': settings.DEFAULT_FROM_EMAIL, 'name': 'UKGIN'},
+            'content': [{
+                'type': 'text/plain',
+                'value': f'Click the link to verify your email: {verification_url}',
+            }],
+        }
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        if response.status_code in (200, 202):
+            return True, None
+        return False, f'SendGrid error: {response.status_code} {response.text}'
+    except Exception as e:
+        return False, str(e)
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
@@ -202,19 +283,28 @@ class UserViewSet(viewsets.ModelViewSet):
         email_sent = False
         email_error = None
         try:
-            token = RefreshToken.for_user(user)
-            verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
-            send_mail(
-                'UKGIN - Verify Your Email',
-                f'Click the link to verify your email: {verification_url}',
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                fail_silently=False,
-            )
+            token = build_email_verification_token(user)
+            verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token)}&email={user.email}"
+            print(f"[EmailVerification] Attempting to send verification email to {user.email} via {settings.EMAIL_HOST}:{settings.EMAIL_PORT} from {settings.DEFAULT_FROM_EMAIL}")
+            send_verification_email(user, verification_url)
             email_sent = True
+            print(f"[EmailVerification] Successfully sent verification email to {user.email}")
         except Exception as e:
             email_error = str(e)
             print(f"[EmailVerification] Failed to send verification email to {user.email}: {e}")
+            print(f"[EmailVerification] Email settings: host={settings.EMAIL_HOST}, port={settings.EMAIL_PORT}, user={settings.EMAIL_HOST_USER}, from={settings.DEFAULT_FROM_EMAIL}, tls={settings.EMAIL_USE_TLS}")
+            # Fallback: try console backend for development
+            try:
+                from django.conf import settings as django_settings
+                old_backend = django_settings.EMAIL_BACKEND
+                django_settings.EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+                send_verification_email(user, verification_url)
+                django_settings.EMAIL_BACKEND = old_backend
+                email_sent = True
+                email_error = None
+                print(f"[EmailVerification] Console fallback succeeded for {user.email}")
+            except Exception as e2:
+                print(f"[EmailVerification] Console fallback also failed: {e2}")
         AuditLog.objects.create(
             admin_user=request.user if request.user.is_authenticated else None,
             action='user_create',
@@ -407,6 +497,18 @@ class UserViewSet(viewsets.ModelViewSet):
             wb.save(response)
             return response
         return Response({'users': UserSerializer(users, many=True).data})
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAdminUser])
+    def details(self, request, pk=None):
+        user = self.get_object()
+        user_data = UserSerializer(user, context={'request': request}).data
+        kyc_docs = KYCDocument.objects.filter(user=user).order_by('-created_at')
+        donations = Donation.objects.filter(user=user).order_by('-created_at')
+        deposits = Deposit.objects.filter(user=user).order_by('-created_at')
+        user_data['kyc_documents'] = KYCDocumentSerializer(kyc_docs, many=True, context={'request': request}).data
+        user_data['donations'] = DonationSerializer(donations, many=True, context={'request': request}).data
+        user_data['deposits'] = DepositSerializer(deposits, many=True, context={'request': request}).data
+        return Response({'status': 'success', 'data': user_data})
 
 
 class WalletViewSet(viewsets.ModelViewSet):
@@ -962,18 +1064,18 @@ class DashboardStatsView(APIView):
             'approved_deposits': float(approved_deposits),
             'monthly_revenue': float(monthly_revenue),
             'total_platform_balance': float(total_platform_balance),
-            'total_events': 0,
-            'total_news': 0,
-            'total_projects': 0,
-            'total_gallery': 0,
-            'total_downloads': 0,
-            'total_volunteers': 0,
-            'total_partners': 0,
-            'total_sponsors': 0,
-            'total_states': 0,
+            'total_events': Event.objects.count(),
+            'total_news': Post.objects.count(),
+            'total_projects': Project.objects.count(),
+            'total_gallery': GalleryImage.objects.count(),
+            'total_downloads': Document.objects.count(),
+            'total_volunteers': VolunteerApplication.objects.count(),
+            'total_partners': Partner.objects.count(),
+            'total_sponsors': Sponsor.objects.count(),
+            'total_states': StateChapter.objects.count(),
             'total_lgas': 0,
-            'total_notifications': 0,
-            'total_reports': 0,
+            'total_notifications': Notification.objects.count(),
+            'total_reports': SupportTicket.objects.count(),
             'recent_logins': LoginHistory.objects.filter(created_at__gte=timezone.now() - timedelta(days=1)).count(),
         }
         return Response(stats)
@@ -1091,22 +1193,11 @@ class CreateUserAPIView(generics.CreateAPIView):
         except Exception as e:
             print(f'[Registration] serializer_errors={serializer.errors if hasattr(serializer, "errors") else "N/A"}, error={type(e).__name__}: {e}')
             raise
-        token = RefreshToken.for_user(user)
-        verify_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
+        token = build_email_verification_token(user)
+        verify_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token)}&email={user.email}"
         print(f'[RegistrationEmail] Attempting email to={user.email}, from={settings.DEFAULT_FROM_EMAIL}, backend={settings.EMAIL_BACKEND}')
         try:
-            html_message = render_to_string('users/email_verification.html', {'verify_url': verify_url})
-            text_message = render_to_string('users/email_verification.txt', {'verify_url': verify_url})
-            email = EmailMessage(
-                'UKGIN - Verify Your Email',
-                text_message,
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                headers={'Reply-To': settings.DEFAULT_FROM_EMAIL, 'X-Mailer': 'UKGIN'},
-            )
-            email.content_subtype = 'html'
-            email.body = html_message
-            email.send(fail_silently=False)
+            send_verification_email(user, verify_url)
             print(f'[RegistrationEmail] Email sent successfully to={user.email}')
         except OperationalError:
             print('Registration DB error')
@@ -1223,15 +1314,19 @@ class PasswordResetRequestView(APIView):
         try:
             html_message = render_to_string('users/password_reset.html', {'reset_url': reset_url})
             text_message = render_to_string('users/password_reset.txt', {'reset_url': reset_url})
-            email = EmailMessage(
-                'UKGIN Password Reset',
+            email = EmailMultiAlternatives(
+                'Reset your UKGIN password',
                 text_message,
-                settings.DEFAULT_FROM_EMAIL,
+                default_from_email(),
                 [user.email],
-                headers={'Reply-To': settings.DEFAULT_FROM_EMAIL, 'X-Mailer': 'UKGIN'},
+                headers={
+                    'Reply-To': bare_from_email(),
+                    'Auto-Submitted': 'auto-generated',
+                    'Precedence': 'bulk',
+                    'X-Entity-Ref-ID': uuid.uuid4().hex,
+                },
             )
-            email.content_subtype = 'html'
-            email.body = html_message
+            email.attach_alternative(html_message, 'text/html')
             email.send(fail_silently=False)
             print(f'[PasswordReset] Email sent successfully to={user.email}')
         except Exception as e:
@@ -1340,6 +1435,22 @@ class AdminConstitutionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return self.queryset
+
+    def _enforce_single_current(self, constitution):
+        if constitution.is_current:
+            Constitution.objects.exclude(pk=constitution.pk).filter(is_current=True).update(is_current=False)
+
+    def perform_create(self, serializer):
+        # A newly uploaded constitution becomes the public one unless the admin says otherwise.
+        if 'is_current' not in self.request.data:
+            serializer.save(is_current=True)
+        else:
+            serializer.save()
+        self._enforce_single_current(serializer.instance)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        self._enforce_single_current(serializer.instance)
 
 
 class VolunteerApplicationViewSet(viewsets.ModelViewSet):
@@ -1534,14 +1645,92 @@ class PublicEventsView(generics.ListAPIView):
 
 
 class PublicConstitutionView(generics.ListAPIView):
-    queryset = Constitution.objects.filter(is_current=True).order_by('-created_at')[:1]
     serializer_class = ConstitutionSerializer
     permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return Constitution.objects.filter(is_current=True).order_by('-effective_date', '-created_at')[:1]
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+
+
+class PublicConstitutionFileView(APIView):
+    """Streams the current constitution PDF (inline for reading, attachment on download)."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        constitution = (
+            Constitution.objects.filter(is_current=True, file__isnull=False)
+            .exclude(file='')
+            .order_by('-effective_date', '-created_at')
+            .first()
+        )
+        if not constitution:
+            return Response({'detail': 'No constitution document is available.'}, status=404)
+        try:
+            file_handle = constitution.file.open('rb')
+            file_size = constitution.file.size
+        except (FileNotFoundError, OSError):
+            return Response({'detail': 'The constitution file is missing from storage.'}, status=404)
+
+        download = request.query_params.get('download') in ('1', 'true', 'yes')
+        disposition = 'attachment' if download else 'inline'
+        filename = f"UKGIN-Constitution-{constitution.version or 'current'}.pdf"
+
+        # Chrome's PDF viewer asks for byte ranges; without a 206 answer it renders a blank frame.
+        range_header = request.META.get('HTTP_RANGE', '')
+        start, end, status_code = 0, file_size - 1, 200
+        if range_header.startswith('bytes='):
+            spec = range_header[len('bytes='):].split(',')[0].strip()
+            first, _, last = spec.partition('-')
+            if first:
+                start = int(first)
+                end = int(last) if last else file_size - 1
+            elif last:
+                start = max(0, file_size - int(last))
+            end = min(end, file_size - 1)
+            if start > end or start >= file_size:
+                file_handle.close()
+                return self._pdf_response(
+                    HttpResponse(status=416),
+                    disposition,
+                    filename,
+                    extra={'Content-Range': f'bytes */{file_size}'},
+                )
+            status_code = 206
+
+        if status_code == 206:
+            file_handle.seek(start)
+            payload = file_handle.read(end - start + 1)
+            file_handle.close()
+            response = HttpResponse(payload, content_type='application/pdf', status=206)
+            extra = {
+                'Content-Range': f'bytes {start}-{end}/{file_size}',
+                'Content-Length': str(len(payload)),
+            }
+        else:
+            response = FileResponse(file_handle, content_type='application/pdf')
+            extra = {}
+
+        return self._pdf_response(response, disposition, filename, extra=extra)
+
+    @staticmethod
+    def _pdf_response(response, disposition, filename, extra=None):
+        response['Content-Disposition'] = f'{disposition}; filename="{filename}"'
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Accept-Ranges'] = 'bytes'
+        # The reader embeds this PDF in an iframe on the frontend origin, so the
+        # default X-Frame-Options: DENY has to be replaced with an allow-all CSP.
+        response['Content-Security-Policy'] = 'frame-ancestors *'
+        response['Cache-Control'] = 'no-store'
+        for key, value in (extra or {}).items():
+            response[key] = value
+        response.xframe_options_exempt = True
+        return response
 
 
 class PublicDocumentsView(generics.ListAPIView):
@@ -1691,19 +1880,16 @@ class ResendVerificationEmailView(APIView):
         email_sent = False
         email_error = None
         try:
-            token = RefreshToken.for_user(user)
-            verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token.access_token)}&email={user.email}"
-            send_mail(
-                'UKGIN - Verify Your Email',
-                f'Click the link to verify your email: {verification_url}',
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                fail_silently=False,
-            )
+            token = build_email_verification_token(user)
+            verification_url = f"{request.data.get('frontend_url', 'http://localhost:5173')}/verify-email?token={str(token)}&email={user.email}"
+            print(f"[EmailVerification] Attempting to resend verification email to {user.email} via {settings.EMAIL_HOST}:{settings.EMAIL_PORT} from {settings.DEFAULT_FROM_EMAIL}")
+            send_verification_email(user, verification_url)
             email_sent = True
+            print(f"[EmailVerification] Successfully resent verification email to {user.email}")
         except Exception as e:
             email_error = str(e)
             print(f"[EmailVerification] Failed to resend verification email to {user.email}: {e}")
+            print(f"[EmailVerification] Email settings: host={settings.EMAIL_HOST}, port={settings.EMAIL_PORT}, user={settings.EMAIL_HOST_USER}, from={settings.DEFAULT_FROM_EMAIL}, tls={settings.EMAIL_USE_TLS}")
         if email_sent:
             return Response({'detail': 'Verification email sent successfully. Please check your inbox and spam/junk folder.'})
         return Response({'detail': f'Failed to send verification email: {email_error or "Unknown error"}'}, status=500)

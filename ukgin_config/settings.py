@@ -86,6 +86,16 @@ if USE_CONSOLE_EMAIL_BACKEND:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 print(f'[EmailConfig] backend={EMAIL_BACKEND}, host={EMAIL_HOST}, port={EMAIL_PORT}, user={EMAIL_HOST_USER}, from={DEFAULT_FROM_EMAIL}, console={USE_CONSOLE_EMAIL_BACKEND}')
+if EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend' and not EMAIL_HOST_PASSWORD:
+    print('[EmailConfig] WARNING: EMAIL_HOST_PASSWORD is not set. Emails will fail to send via SMTP.')
+
+SENDGRID_API_KEY = get_optional_env_value('SENDGRID_API_KEY', default='')
+
+# YouTube Settings
+YOUTUBE_CLIENT_ID = get_optional_env_value('YOUTUBE_CLIENT_ID', default='')
+YOUTUBE_CLIENT_SECRET = get_optional_env_value('YOUTUBE_CLIENT_SECRET', default='')
+YOUTUBE_REFRESH_TOKEN = get_optional_env_value('YOUTUBE_REFRESH_TOKEN', default='')
+YOUTUBE_CHANNEL_HANDLE = get_optional_env_value('YOUTUBE_CHANNEL_HANDLE', default='@ukginglobal')
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = 104857600
 FILE_UPLOAD_MAX_MEMORY_SIZE = 104857600
@@ -111,6 +121,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    # Serves collected static files from the app process (no separate static host).
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -164,6 +176,7 @@ DATABASES = {
         'PASSWORD': get_env_value('DB_PASSWORD'),
         'HOST': get_env_value('DB_HOST'),
         'PORT': get_env_value('DB_PORT', cast=int),
+        'OPTIONS': {'sslmode': get_optional_env_value('DB_SSLMODE', default='require')},
     }
 }
 
@@ -262,7 +275,10 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = os.getenv('STATIC_ROOT', os.path.join(BASE_DIR, 'staticfiles'))
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+WHITENOISE_MAX_AGE = 60 * 60 * 24 * 7
 
 CLOUDINARY_URL = os.getenv('CLOUDINARY_URL')
 CLOUDINARY_STORAGE = {
@@ -321,26 +337,60 @@ if USE_CLOUDINARY_STORAGE:
 from cloudinary_storage.storage import MediaCloudinaryStorage
 
 class AutoDetectCloudinaryStorage(MediaCloudinaryStorage):
-    VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.ogg', '.ogv', '.flv', '.wmv'}
+    # VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm', '.mkv', '.ogg', '.ogv', '.flv', '.wmv'}
     RAW_EXTENSIONS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv', '.zip', '.rar', '.7z'}
     _detected_videos = {}
     _detected_raws = {}
+    _document_storage = None
 
-    def _get_resource_type(self, name):
-        if name in self._detected_videos:
-            return self._detected_videos[name]
-        if name in self._detected_raws:
-            return self._detected_raws[name]
-        extension = os.path.splitext(name)[1].lower()
-        if extension in self.VIDEO_EXTENSIONS:
-            self._detected_videos[name] = 'video'
-            return 'video'
-        if extension in self.RAW_EXTENSIONS:
-            self._detected_raws[name] = 'raw'
-            return 'raw'
-        return super()._get_resource_type(name)
+    @property
+    def document_storage(self):
+        # Cloudinary cannot deliver PDF/raw documents on this account (401 on every
+        # raw + .pdf delivery URL), so documents are kept on disk and served by Django.
+        if AutoDetectCloudinaryStorage._document_storage is None:
+            from django.core.files.storage import FileSystemStorage
+            AutoDetectCloudinaryStorage._document_storage = FileSystemStorage(
+                location=MEDIA_ROOT,
+                base_url=MEDIA_URL,
+            )
+        return AutoDetectCloudinaryStorage._document_storage
+
+    def _is_document(self, name):
+        return os.path.splitext(name)[1].lower() in self.RAW_EXTENSIONS
+
+    def _open(self, name, mode='rb'):
+        if self._is_document(name):
+            return self.document_storage.open(name, mode)
+        return super()._open(name, mode)
+
+    def url(self, name):
+        if self._is_document(name):
+            return self.document_storage.url(name)
+        return super().url(name)
+
+    def exists(self, name):
+        if self._is_document(name):
+            return self.document_storage.exists(name)
+        return super().exists(name)
+
+    def size(self, name):
+        if self._is_document(name):
+            return self.document_storage.size(name)
+        return super().size(name)
+
+    def delete(self, name):
+        if self._is_document(name):
+            return self.document_storage.delete(name)
+        return super().delete(name)
+
+    def get_available_name(self, name, max_length=None):
+        if self._is_document(name):
+            return self.document_storage.get_available_name(name, max_length=max_length)
+        return super().get_available_name(name, max_length=max_length)
 
     def _save(self, name, content):
+        if self._is_document(name):
+            return self.document_storage.save(name, content)
         mime_type = getattr(content, 'content_type', '') or ''
         original_name = getattr(content, 'name', '') or ''
         name = self._normalise_name(name)
@@ -350,10 +400,11 @@ class AutoDetectCloudinaryStorage(MediaCloudinaryStorage):
         wrapped._original_name = original_name
         response = self._upload(name, wrapped)
         result_type = response.get('resource_type', 'image')
-        self._detected_videos[name] = result_type
+        # self._detected_videos[name] = result_type
         public_id = response.get('public_id')
         if public_id and public_id != name:
-            self._detected_videos[public_id] = result_type
+            # self._detected_videos[public_id] = result_type
+            pass
         return public_id
 
     def _upload(self, name, content):
@@ -361,9 +412,9 @@ class AutoDetectCloudinaryStorage(MediaCloudinaryStorage):
         try:
             mime_type = getattr(content, 'content_type', '') or ''
             original_name = getattr(content, '_original_name', '') or getattr(content, 'name', '') or ''
-            if mime_type.startswith('video/'):
-                resource_type = 'video'
-            elif mime_type in (
+            # if mime_type.startswith('video/'):
+            #     resource_type = 'video'
+            if mime_type in (
                 'application/pdf',
                 'application/msword',
                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -380,9 +431,9 @@ class AutoDetectCloudinaryStorage(MediaCloudinaryStorage):
                 resource_type = 'raw'
             if resource_type == 'image':
                 original_ext = os.path.splitext(original_name)[1].lower()
-                if original_ext in self.VIDEO_EXTENSIONS:
-                    resource_type = 'video'
-                elif original_ext in self.RAW_EXTENSIONS:
+                # if original_ext in self.VIDEO_EXTENSIONS:
+                #     resource_type = 'video'
+                if original_ext in self.RAW_EXTENSIONS:
                     resource_type = 'raw'
         except Exception:
             pass

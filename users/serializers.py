@@ -1,7 +1,9 @@
 from rest_framework import serializers
+import base64
 import os
 import tempfile
 from django.conf import settings
+from django.db import transaction
 from django.urls import reverse
 from .models import User, Wallet, WalletTransaction, KYCDocument, Donation, Deposit, Withdrawal, Notification, SupportTicket, TicketReply, Referral, AuditLog, SystemSettings, LoginHistory, Event, EventResponse, DocumentCategory, Document, Constitution, Announcement, VolunteerApplication, NewsletterSubscription, Newsletter, ContactMessage, PageContent, Category, Post, Project, SocialMediaLink, ExecutiveLeader, GalleryImage, StateChapter, Partner, Sponsor
 from .youtube_utils import upload_video_to_youtube
@@ -84,6 +86,26 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'confirmPassword': 'Passwords do not match.'})
         return data
 
+    def validate_signature_data(self, value):
+        """Reject bad data URLs before any row is written.
+
+        Previously a malformed signature raised mid-`create`, which left an
+        already-saved user behind while the client saw a 500.
+        """
+        if not value:
+            return value
+        if ';base64,' not in value:
+            raise serializers.ValidationError('Signature must be a base64 data URL.')
+        header, _, payload = value.partition(';base64,')
+        if not header.startswith('data:image/'):
+            raise serializers.ValidationError('Signature must be an image data URL.')
+        try:
+            base64.b64decode(payload, validate=True)
+        except Exception:
+            raise serializers.ValidationError('Signature image data is not valid base64.')
+        return value
+
+    @transaction.atomic
     def create(self, validated_data):
         validated_data.pop('confirmPassword', None)
         signature_data = validated_data.pop('signature_data', None)
@@ -119,10 +141,9 @@ class RegisterSerializer(serializers.ModelSerializer):
                 setattr(user, field, '')
         user.save()
         if signature_data:
-            import base64
             from django.core.files.base import ContentFile
-            format, imgstr = signature_data.split(';base64,')
-            ext = format.split('/')[-1]
+            format, _, imgstr = signature_data.partition(';base64,')
+            ext = format.split('/')[-1].split('+')[0] or 'png'
             user.signature.save(f'signature_{user.id}.{ext}', ContentFile(base64.b64decode(imgstr)), save=True)
         return user
 

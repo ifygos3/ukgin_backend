@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action, api_view, permission_classes
 from django.db.models import Sum, Count, Q, Avg
 from django.db import OperationalError
+from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth import get_user_model
@@ -1182,6 +1183,7 @@ class CreateUserAPIView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         try:
             serializer = self.get_serializer(data=request.data)
